@@ -11,7 +11,7 @@ El wrapper es `automation/ansible/playbooks/lab00.yml`. El modo por defecto
 `participant_access_verificar_solo: true` sólo verifica el IdP y la presencia de
 la entrada. Son obligatorios `participant_idp_name`, `participant_idp_secret_name`,
 `openshift_api_esperada` y
-`openshift_cluster_uid_esperado`; no existe selección automática ni fallback.
+`openshift_cluster_uid_esperado` (el `metadata.uid` del namespace `kube-system`, no el `clusterID` de OpenShift: `oc get ns kube-system -o jsonpath='{.metadata.uid}'`); no existe selección automática ni fallback.
 El nombre del Secret debe coincidir exactamente con el configurado en el IdP.
 La entrada sólo se admite con mappingMethod `claim` o `add`.
 
