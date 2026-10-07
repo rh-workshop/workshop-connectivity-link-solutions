@@ -28,3 +28,7 @@ node postman/validate.cjs
 ```
 
 Los chequeos que comparan las plantillas y la colección con las páginas del taller (`check_parity.py`, `catalog_parity.py`, `postman/validate.cjs`) necesitan el repositorio del workshop. Lo encuentran solo si está clonado junto a este (`../workshop-connectivity-link`) o con `WORKSHOP_ROOT` apuntando a él; si no, se saltan con un aviso.
+
+## Licencia
+
+[Apache-2.0](LICENSE).
