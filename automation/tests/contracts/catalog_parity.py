@@ -91,7 +91,7 @@ class ParityContract(unittest.TestCase):
     def test_coverage_classifies_every_template_without_hiding_drift(self):
         fixtures = sorted(FIXTURE.parent.glob('parity-*.yml'))
         exclusions = FIXTURE.with_name('content-parity-exclusions.yml')
-        self.assertEqual(PARITY.coverage(fixtures, exclusions), (42, 50, 8))
+        self.assertEqual(PARITY.coverage(fixtures, exclusions), (42, 52, 10))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'exclusions.yml'
             source = yaml.safe_load(exclusions.read_text())

@@ -11,7 +11,7 @@ shell:
   KEYCLOAK_REALM: realm-demo
   LAB_API_KEY: DEMO-NOT-A-REAL-API-KEY
   CLOUD_HOST: api-demo.cloud.example.test
-  ACME_ISSUER: letsencrypt-dns01
+  ACME_ISSUER: letsencrypt-dns01-demo  # la página: letsencrypt-dns01-${LAB_ID}
   EXT_HOST: inventory.example.test
   EXT_PORT: 8080
 heredoc_indices:
