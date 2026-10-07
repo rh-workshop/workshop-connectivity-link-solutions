@@ -1,0 +1,10 @@
+---
+# Alta de acceso por el instructor; navegación/login del participante sigue manual.
+- name: Lab 0 · acceso HTPasswd explícito y protegido
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: lab00
+      tags: [lab00]

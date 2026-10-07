@@ -1,0 +1,13 @@
+---
+- name: Comprobar el consumo publicado por el mock de IA
+  ansible.builtin.assert:
+    that:
+      - bonus_respuesta.json.usage.prompt_tokens is integer
+      - bonus_respuesta.json.usage.completion_tokens is integer
+      - bonus_respuesta.json.usage.total_tokens is integer
+      - bonus_respuesta.json.usage.prompt_tokens >= 0
+      - bonus_respuesta.json.usage.completion_tokens >= 0
+      - bonus_respuesta.json.usage.total_tokens > 0
+      - bonus_respuesta.json.usage.prompt_tokens + bonus_respuesta.json.usage.completion_tokens == bonus_respuesta.json.usage.total_tokens
+    fail_msg: La respuesta de IA no tiene un consumo entero coherente de tokens.
+    quiet: true

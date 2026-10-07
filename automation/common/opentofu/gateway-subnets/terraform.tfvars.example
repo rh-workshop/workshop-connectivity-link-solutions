@@ -1,0 +1,5 @@
+expected_account_id = "000000000000"
+region              = "us-east-2"
+vpc_id              = "vpc-example"
+expected_cluster_id = "workshop-example"
+subnet_ids          = ["subnet-examplea", "subnet-exampleb", "subnet-examplec"]

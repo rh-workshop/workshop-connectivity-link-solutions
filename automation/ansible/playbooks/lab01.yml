@@ -1,0 +1,11 @@
+---
+# Lab 1 · Inspección del operador RHCL y del CR Kuadrant (solo lectura).
+#   Depende de: plataforma instalada.
+- name: Lab 1 · Operador RHCL y CR Kuadrant
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: lab01
+      tags: [lab01]

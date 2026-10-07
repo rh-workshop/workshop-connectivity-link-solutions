@@ -1,0 +1,52 @@
+# Lab 10 · paso 6: autorización por operación. GET exige bank:read y POST
+# bank:write en el claim scope (texto separado por espacios). Sustituye a la
+# AuthPolicy del Gateway en esta ruta: repite emisor y filtro user_id.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: gobierno-auth-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: gobierno-route-{{ lab_id }}
+  rules:
+    authentication:
+      "keycloak-jwt":
+        jwt:
+          issuerUrl: {{ wk_keycloak_issuer }}
+        credentials:
+          authorizationHeader:
+            prefix: Bearer
+    authorization:
+      "lectura-exige-bank-read":
+        when:
+          - predicate: request.method == "GET"
+        patternMatching:
+          patterns:
+            - predicate: auth.identity.scope.split(" ").exists(s, s == "bank:read")
+      "escritura-exige-bank-write":
+        when:
+          - predicate: request.method == "POST"
+        patternMatching:
+          patterns:
+            - predicate: auth.identity.scope.split(" ").exists(s, s == "bank:write")
+    response:
+      unauthenticated:
+        code: 401
+        message:
+          value: "Token JWT requerido (emisor: {{ wk_realm }})"
+      unauthorized:
+        code: 403
+        message:
+          value: "La operacion exige el scope bank:read (GET) o bank:write (POST)"
+      success:
+        filters:
+          "identity":
+            json:
+              properties:
+                "user_id":
+                  selector: auth.identity.sub

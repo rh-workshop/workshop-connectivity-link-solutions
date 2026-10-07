@@ -1,0 +1,15 @@
+# Patch de Service para toda la GatewayClass; no cambia spec.type de Services.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ gateway_defaults_name }}
+  namespace: {{ gateway_defaults_namespace }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: platform
+    gateway.istio.io/defaults-for-class: istio
+data:
+  service: |
+    metadata:
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-subnets: "{{ aws_load_balancer_subnet_ids | join(',') }}"

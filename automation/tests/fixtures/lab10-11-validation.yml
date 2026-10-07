@@ -1,0 +1,15 @@
+# Contratos sintéticos de validación; no ejecutan Ansible ni consultan el clúster.
+lab10_quota:
+  limit: 2
+  expected_statuses: [200, 200, 429]
+  routes:
+    - url: "{{ wk_gob_url }}"
+      headers: "{{ lab10_token_m2m }}"
+      json_contract: "{{ lab10_http_contract }}"
+    - url: "{{ wk_api_url }}"
+      headers: "{{ wk_token }}"
+      json_contract: "{{ wk_bank_json_contract }}"
+lab11_tls:
+  expected_statuses: [-1, -1, 403, 200]
+  negative_status_requires_tls_alert: true
+  positive_control_status: 200

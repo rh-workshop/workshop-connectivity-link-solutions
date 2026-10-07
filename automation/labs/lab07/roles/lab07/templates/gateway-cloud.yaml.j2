@@ -1,0 +1,33 @@
+# Segundo Gateway del participante, con hostname en la zona pública de la nube
+# (lab7-cloud.adoc, paso 2). Convive con el del Lab 3.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ lab07_gateway }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+spec:
+  gatewayClassName: {{ gateway_class }}
+{% if aws_gateway_subnets_override | default(false) and aws_load_balancer_subnet_ids | default([]) | length > 0 %}
+  infrastructure:
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-subnets: "{{ aws_load_balancer_subnet_ids | join(',') }}"
+{% endif %}
+  listeners:
+    - name: https
+      hostname: {{ lab07_host }}
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ lab07_gateway }}-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-tenant: {{ lab_id }}

@@ -1,0 +1,12 @@
+---
+# Plataforma del taller: operadores y CRs base (una vez por clúster).
+#   ansible-playbook playbooks/plataforma.yml                                   # solo verificar (group_vars)
+#   ansible-playbook playbooks/plataforma.yml -e plataforma_verificar_solo=false  # instalar lo que falte
+- name: Plataforma · operadores y CRs base de Connectivity Link
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: plataforma
+      tags: [plataforma]

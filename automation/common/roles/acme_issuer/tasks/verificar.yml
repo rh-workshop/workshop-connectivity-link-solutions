@@ -1,0 +1,38 @@
+---
+- name: Leer el emisor para comprobar configuración exacta
+  kubernetes.core.k8s_info:
+    api_version: cert-manager.io/v1
+    kind: "{{ acme_issuer_kind }}"
+    name: "{{ acme_issuer_nombre }}"
+    namespace: "{{ acme_issuer_namespace if acme_issuer_kind == 'Issuer' else omit }}"
+  register: acme_emisor_verificar
+
+- name: Verificar propiedad del emisor de participante sin adoptar recursos GitOps
+  ansible.builtin.assert:
+    that:
+      - acme_emisor_verificar.resources | length == 1
+      - (acme_emisor_verificar.resources[0].metadata.labels | default({})).get('workshop.user', '') == lab_id
+      - (acme_emisor_verificar.resources[0].metadata.labels | default({})).get('workshop.module', '') == 'connectivity-link'
+      - (acme_emisor_verificar.resources[0].metadata.labels | default({})).get('workshop.component', '') == 'acme-issuer'
+      - (acme_emisor_verificar.resources[0].metadata.annotations | default({})).get('argocd.argoproj.io/tracking-id', '') == ''
+    quiet: true
+  when: acme_issuer_participant_mode | default(false) | bool
+
+- name: Comprobar servidor, cuenta y solver DNS-01 esperados
+  ansible.builtin.assert:
+    that:
+      - acme_emisor_verificar.resources | length == 1
+      - acme_emisor_verificar.resources[0].spec == (lookup('ansible.builtin.template', 'cluster-issuer.yaml.j2') | from_yaml).spec
+    fail_msg: El emisor no existe o su configuración difiere de la fuente canónica; no se modifica en modo verificación.
+    quiet: true
+
+- name: Esperar al ClusterIssuer Ready
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: "{{ acme_issuer_kind }}"
+    espera_nombre: "{{ acme_issuer_nombre }}"
+    espera_namespace: "{{ acme_issuer_namespace if acme_issuer_kind == 'Issuer' else omit }}"
+    espera_condicion: Ready

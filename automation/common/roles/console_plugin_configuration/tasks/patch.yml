@@ -1,0 +1,42 @@
+---
+- name: Exigir escritura explícita del workaround de proveedor
+  ansible.builtin.assert:
+    that: not console_plugin_verificar_solo | bool
+    quiet: true
+
+- name: Releer el Deployment inmediatamente antes del patch
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ console_plugin_deployment }}"
+    namespace: "{{ console_plugin_namespace }}"
+  register: console_plugin_actual
+
+- name: Revalidar la propiedad antes del patch
+  ansible.builtin.import_tasks: validar_propiedad.yml
+
+- name: Exigir que el contenedor todavía exista antes de un merge por nombre
+  ansible.builtin.assert:
+    that: >-
+      console_plugin_actual.resources[0].spec.template.spec.containers
+      | selectattr('name', 'equalto', console_plugin_contenedor) | list | length == 1
+    quiet: true
+
+- name: Cambiar exclusivamente METRICS_WORKLOAD_SUFFIX del contenedor existente
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ console_plugin_deployment }}"
+    namespace: "{{ console_plugin_namespace }}"
+    merge_type: strategic-merge
+    definition:
+      spec:
+        template:
+          spec:
+            containers:
+              - name: "{{ console_plugin_contenedor }}"
+                env:
+                  - name: METRICS_WORKLOAD_SUFFIX
+                    value: "{{ console_plugin_sufijo }}"
+                    valueFrom: null

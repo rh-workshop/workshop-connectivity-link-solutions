@@ -1,0 +1,30 @@
+---
+# Vuelve spec.replicas del CR Authorino a su valor original: si no existía,
+# se quita (json patch remove) para que lo gestione el operador.
+- name: Leer el CR Authorino actual
+  kubernetes.core.k8s_info:
+    api_version: operator.authorino.kuadrant.io/v1beta1
+    kind: Authorino
+    name: authorino
+    namespace: kuadrant-system
+  register: lab12_authorino_actual
+
+- name: Restaurar spec.replicas de Authorino
+  kubernetes.core.k8s_json_patch:
+    api_version: operator.authorino.kuadrant.io/v1beta1
+    kind: Authorino
+    name: authorino
+    namespace: kuadrant-system
+    patch: >-
+      {{ [{'op': 'replace', 'path': '/spec/replicas', 'value': lab12_orig_authorino.replicas}]
+         if lab12_orig_authorino.replicas is defined
+         else [{'op': 'remove', 'path': '/spec/replicas'}] }}
+  when: >-
+    (lab12_authorino_actual.resources[0].spec.replicas | default('ausente') | string)
+    != (lab12_orig_authorino.replicas | default('ausente') | string)
+
+- name: Esperar a Authorino restaurado
+  ansible.builtin.include_tasks: esperar_despliegue.yml
+  vars:
+    dep_nombre: authorino
+    dep_replicas: "{{ lab12_orig_authorino.replicas | default(1) }}"

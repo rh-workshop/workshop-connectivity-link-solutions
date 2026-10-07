@@ -1,0 +1,26 @@
+# Application de Argo CD: Git -> clúster, con auto-sync y self-heal
+# (lab6.adoc, «(Instructor) Crear el Application de Argo CD»). Sin finalizer de
+# recursos: al borrar el Application la RateLimitPolicy se queda (es del Lab 4A).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ lab06_application }}
+  namespace: {{ lab06_argocd_namespace }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+spec:
+  project: {{ lab06_project }}
+  source:
+    repoURL: {{ lab06_repo_argocd }}
+    targetRevision: {{ lab06_git_revision }}
+    path: {{ lab06_git_path }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ wk_ns_app }}
+  syncPolicy:
+    automated:
+      prune: true        # borra del clúster lo que se borra de Git
+      selfHeal: true     # revierte cambios hechos a mano (drift)
+    syncOptions:
+      - CreateNamespace=false

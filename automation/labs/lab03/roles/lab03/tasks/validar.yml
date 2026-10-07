@@ -1,0 +1,79 @@
+---
+# «Comprueba el resultado» del Lab 3: Gateway, Certificate y políticas.
+- name: Comprobar TLSPolicy Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: TLSPolicy
+    espera_nombre: "tls-policy-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Enforced
+
+- name: Comprobar DNSPolicy Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: DNSPolicy
+    espera_nombre: "dns-policy-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Enforced
+  when:
+    - entrada_modo == 'loadbalancer'
+    - dns_policy_habilitada | bool
+
+- name: Comprobar AuthPolicy JWT Accepted
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: AuthPolicy
+    espera_nombre: "gw-default-auth-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Accepted
+
+- name: Consultar el Gateway y su Secret TLS
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_gateway }}"
+  loop:
+    - {v: gateway.networking.k8s.io/v1, k: Gateway, n: "{{ wk_gateway }}"}
+    - {v: v1, k: Secret, n: "{{ wk_gateway }}-tls"}
+    - {v: cert-manager.io/v1, k: Certificate, n: "{{ wk_gateway }}-https"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+  register: lab03_recursos
+  no_log: "{{ item.k == 'Secret' }}"
+
+- name: Comprobar el Secret TLS del listener y la dirección del Gateway
+  ansible.builtin.assert:
+    that:
+      - lab03_recursos.results[1].resources | length == 1
+      - lab03_recursos.results[1].resources[0].type == 'kubernetes.io/tls'
+      - lab03_recursos.results[2].resources | length == 1
+      - lab03_cert.spec.secretName == lab03_recursos.results[1].resources[0].metadata.name
+      - lab03_https | length == 1
+      - lab03_https[0].tls.certificateRefs | length == 1
+      - lab03_https[0].tls.certificateRefs[0].name == lab03_cert.spec.secretName
+      - lab03_https[0].tls.certificateRefs[0].kind | default('Secret') == 'Secret'
+      - lab03_https[0].tls.certificateRefs[0].group | default('') == ''
+      - lab03_https[0].tls.certificateRefs[0].namespace | default(wk_ns_gateway) == wk_ns_gateway
+      - entrada_modo == 'route' or (lab03_recursos.results[0].resources[0].status.addresses | default([]) | length > 0)
+    fail_msg: "Falta el Secret {{ wk_gateway }}-tls o el Gateway no tiene dirección."
+    quiet: true
+  vars:
+    lab03_cert: "{{ lab03_recursos.results[2].resources | first | default({}) }}"
+    lab03_https: "{{ lab03_recursos.results[0].resources[0].spec.listeners | selectattr('name', 'equalto', 'https') | list }}"
+
+- name: Resumen del Lab 3
+  ansible.builtin.debug:
+    msg:
+      - "Gateway {{ wk_gateway }} · listener https {{ wk_lab_host }}"
+      - "Dirección: {{ lab03_recursos.results[0].resources[0].status.addresses | default([]) | map(attribute='value') | join(', ') or 'Route passthrough sobre *.apps' }}"
+      - "TLSPolicy Enforced · DNSPolicy {{ 'Enforced' if entrada_modo == 'loadbalancer' and dns_policy_habilitada | bool else 'no aplica' }} · AuthPolicy JWT Accepted"

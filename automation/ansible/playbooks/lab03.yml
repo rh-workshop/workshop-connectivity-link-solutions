@@ -1,0 +1,17 @@
+---
+# Lab 3 · Gateway HTTPS, TLSPolicy, DNSPolicy y AuthPolicy JWT.
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm.
+- name: Lab 3 · Gateway HTTPS, DNS y autenticación
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]

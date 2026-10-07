@@ -1,0 +1,88 @@
+# ClusterRoles para los alumnos del workshop.
+# 1. workshop-gatewayclass-view — lectura cluster-scoped de GatewayClasses:
+#    sin esto el Lab 2 (Infrastructure Owner: `oc get gatewayclass`) falla con Forbidden.
+#    Se enlaza vía ClusterRoleBinding por usuario desde bootstrap-users.sh.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workshop-gatewayclass-view
+  labels:
+    workshop.module: connectivity-link
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses/status"]
+    verbs: ["get"]
+---
+# 2. workshop-policies-edit — permisos sobre Gateway API + políticas Kuadrant
+#    en los namespaces del alumno. Se enlaza vía RoleBinding desde bootstrap-users.sh.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workshop-policies-edit
+  labels:
+    workshop.module: connectivity-link
+rules:
+  # Gateway API (solo los kinds que publican OSSM 3 / Gateway API en el taller:
+  # gateways, httproutes, grpcroutes, referencegrants; no hay tcp/udp/tlsroutes).
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "httproutes", "grpcroutes", "referencegrants"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways/status", "httproutes/status"]
+    verbs: ["get"]
+
+  # Políticas Kuadrant
+  - apiGroups: ["kuadrant.io"]
+    resources: ["authpolicies", "ratelimitpolicies", "tokenratelimitpolicies", "tlspolicies", "dnspolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kuadrant.io"]
+    resources: ["authpolicies/status", "ratelimitpolicies/status", "tokenratelimitpolicies/status", "tlspolicies/status", "dnspolicies/status"]
+    verbs: ["get"]
+
+  # APIs de extensiones Kuadrant (OIDCPolicy, PlanPolicy, TelemetryPolicy)
+  - apiGroups: ["extensions.kuadrant.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # cert-manager: lectura del Certificate emitido por TLSPolicy
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates", "certificaterequests"]
+    verbs: ["get", "list", "watch"]
+
+  # DNSRecord (creado por DNSPolicy bajo el hood)
+  - apiGroups: ["kuadrant.io"]
+    resources: ["dnsrecords"]
+    verbs: ["get", "list", "watch"]
+
+  # El backend `bank-api` del Lab 4/5 es un Deployment + Service estándar: lo
+  # cubre el rol `edit` que bootstrap-users.sh enlaza en cada namespace del
+  # alumno — no requiere reglas adicionales aquí.
+
+---
+# Lectura de componentes para Lab 1. Vincular sólo en namespaces de operadores.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workshop-operator-view
+  labels:
+    workshop.module: connectivity-link
+rules:
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions", "subscriptions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kuadrant.io"]
+    resources: ["kuadrants"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Consultar logs no concede exec, escritura ni lectura de Secrets.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]

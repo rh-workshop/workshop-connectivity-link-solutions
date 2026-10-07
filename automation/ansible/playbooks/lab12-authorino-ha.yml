@@ -1,0 +1,11 @@
+---
+- name: Réplicas Authorino · demostración independiente con restauración
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+  tasks:
+    - name: Ejecutar únicamente la demostración opt-in de HA
+      ansible.builtin.include_role:
+        name: lab12
+        tasks_from: authorino_ha

@@ -1,0 +1,15 @@
+---
+lab01_validar: true
+# CRDs de política que el participante explora con oc api-resources / oc explain.
+lab01_crds:
+  - authpolicies.kuadrant.io
+  - ratelimitpolicies.kuadrant.io
+  - tlspolicies.kuadrant.io
+  - dnspolicies.kuadrant.io
+  - kuadrants.kuadrant.io
+  - dnsrecords.kuadrant.io
+lab01_csvs:
+  - rhcl-operator
+  - authorino-operator
+  - limitador-operator
+  - dns-operator

@@ -1,0 +1,11 @@
+---
+# Adaptador del laboratorio: el bootstrap compartido conserva los nombres,
+# canales y modo verificar_solo del perfil existente de Lab 6.
+- name: Verificar o preparar el controlador GitOps compartido
+  ansible.builtin.include_role:
+    name: gitops_bootstrap
+  vars:
+    gitops_bootstrap_verificar_solo: "{{ lab06_plataforma_verificar_solo }}"
+    gitops_bootstrap_operador: "{{ lab06_gitops_operador }}"
+    gitops_bootstrap_argocd_namespace: "{{ lab06_argocd_namespace }}"
+    gitops_bootstrap_argocd_instancia: "{{ lab06_argocd_instancia }}"

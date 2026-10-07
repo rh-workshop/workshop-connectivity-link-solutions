@@ -1,0 +1,31 @@
+---
+# Lab 12 · Operación: alerta CuotaAgotada y consultas PromQL por ruta.
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm, lab03,
+#   lab04a y lab08 (la ruta /inventario con cuota 3/min y el rol de bob).
+#   El Lab 8 necesita lab08_ext_host (o EXT_HOST en el entorno).
+#   Opcionales (ver automation/labs/lab12/roles/lab12/README.md):
+#     -e lab12_diagnostico=true   fallos de política diag-* en tus namespaces
+#     -e lab12_demos=true         escala Authorino/Limitador: AFECTA A TODOS
+- name: Lab 12 · Operación y resiliencia
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]
+      lab03_validar: false
+    - role: lab04a
+      tags: [lab04a]
+      lab04a_validar: false
+    - role: lab08
+      tags: [lab08]
+      lab08_validar: false
+    - role: lab12
+      tags: [lab12]

@@ -1,0 +1,24 @@
+---
+# Bonus · API de IA simulada (mock-LLM) y TokenRateLimitPolicy de 100 tokens/min.
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm, lab03, lab04a
+#   (reutiliza el hostname, el certificado y el JWT del Gateway del Lab 3).
+- name: Bonus · API de IA y límites por tokens
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]
+      lab03_validar: false
+    - role: lab04a
+      tags: [lab04a]
+      lab04a_validar: false
+    - role: bonus_tokens
+      tags: [bonus_tokens]

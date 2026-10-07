@@ -1,0 +1,11 @@
+---
+# Bootstrap del controlador GitOps, excepción explícita al gestor declarativo.
+# Nunca instala por defecto; tampoco modifica un operador existente.
+gitops_bootstrap_verificar_solo: true
+gitops_bootstrap_operador:
+  nombre: openshift-gitops-operator
+  namespace: openshift-gitops-operator
+  canal: latest
+  csv_prefijo: openshift-gitops-operator
+gitops_bootstrap_argocd_namespace: openshift-gitops
+gitops_bootstrap_argocd_instancia: openshift-gitops

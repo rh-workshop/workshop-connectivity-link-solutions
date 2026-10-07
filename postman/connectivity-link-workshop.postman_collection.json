@@ -1,0 +1,2919 @@
+{
+  "info": {
+    "_postman_id": "8e62724a-b4ad-48c9-bf4f-977e497b849f",
+    "name": "Connectivity Link · Laboratorios 0–12 y Bonus",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Llamadas HTTP ordenadas por laboratorio. Importa el environment, configura URLs/credenciales locales y ejecuta SOLO la carpeta o fase actual: no ejecutes toda la colección. No instala recursos ni sustituye oc, Git, Ansible o OpenTofu. Los resultados dependen de la fase de políticas del laboratorio. No contiene secretos reales."
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwt}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.environment.name) throw new Error('Selecciona el environment local del taller.');",
+          "const text = JSON.stringify(pm.request.toJSON());",
+          "const names = [...new Set(Array.from(text.matchAll(/\\{\\{([A-Za-z][A-Za-z0-9]*)\\}\\}/g), m => m[1]))];",
+          "if (!pm.request.auth || pm.request.auth.type === 'inherit') names.push('jwt');",
+          "for (const name of names) {",
+          "  const value = pm.variables.get(name);",
+          "  if (!value || /example\\.com/.test(String(value))) throw new Error('Configura la variable local: ' + name);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Lab 3 · Gateway HTTPS",
+      "description": "Gateway Programmed, DNS y TLS preparados. Todavía sin HTTPRoute de Bank API.",
+      "item": [
+        {
+          "name": "01 · HTTPS sin ruta → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiBaseUrl}}/",
+            "description": "Ejecutar antes de Lab 4A; una política posterior puede cambiar el resultado.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 4A · JWT y Bank API",
+      "description": "Backend, AuthPolicy y Keycloak aplicados según Lab 4A. Renueva el JWT si caduca.",
+      "item": [
+        {
+          "name": "01 · Autenticación JWT y endpoints Bank API",
+          "item": [
+            {
+              "name": "01 · Obtener JWT de alice",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "url": "{{keycloakIssuer}}/protocol/openid-connect/token",
+                "description": "Emisor y client preparados. Guarda jwt solo en el environment seleccionado; no imprime ni exporta el token.",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "client_id",
+                      "value": "{{keycloakClientId}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "grant_type",
+                      "value": "password",
+                      "type": "text"
+                    },
+                    {
+                      "key": "username",
+                      "value": "{{keycloakUser}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "password",
+                      "value": "{{keycloakPassword}}",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.environment.unset('jwt');"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                      "pm.environment.unset('jwt');",
+                      "if (pm.response.code === 200) {",
+                      "  let data; try { data = pm.response.json(); } catch (_) { data = {}; }",
+                      "  pm.test('Access token válido', () => pm.expect(data.access_token).to.be.a('string').and.not.empty);",
+                      "  if (typeof data.access_token === 'string' && data.access_token) pm.environment.set('jwt', data.access_token);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Sin JWT → 401",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · JWT inválido → 401",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "token-invalido",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Party → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                      "if (pm.response.code === 200) pm.test('Party de demostración', () => pm.expect(pm.response.json().Data.Party.PartyId).to.equal('CL-BANK-DEMO'));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "05 · Accounts → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/accounts",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                      "if (pm.response.code === 200) pm.test('Cuenta de demostración', () => pm.expect(pm.response.json().Data.Account[0].AccountId).to.equal('ACC-DEMO-001'));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "02 · Cuota JWT 5/min",
+          "item": [
+            {
+              "name": "01 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "05 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "06 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "07 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 4B · API keys",
+      "description": "Aplica la política API key en la ruta y registra apiKey. Las comprobaciones de rol/revocación requieren modificar el Secret con los pasos del laboratorio; ejecuta cada request en su fase.",
+      "item": [
+        {
+          "name": "01 · Autenticación y roles con API Key",
+          "item": [
+            {
+              "name": "01 · Sin clave → 401",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Clave inválida → 401",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "clave-invalida"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Clave customer → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Audit con customer → 403",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/admin/audit-log",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 403', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "05 · Audit tras recrear clave admin → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/admin/audit-log",
+                "description": "Primero recrea el Secret con el mismo valor y rol admin; Postman no lo modifica.",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "02 · Cuota API key 5/min",
+          "item": [
+            {
+              "name": "01 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "05 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "06 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "07 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "03 · Revocación y restauración JWT",
+          "item": [
+            {
+              "name": "07 · Clave revocada → 401",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-API-Key",
+                    "value": "{{apiKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "Ejecutar solo después de borrar el Secret.",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "08 · JWT restaurado → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "Retira la política API key de la ruta y renueva jwt en Lab 4A."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 5 · Observabilidad",
+      "description": "JWT restaurado y métricas/trazas preparadas. Estas llamadas generan tráfico; verifica la consola, Telemetry y logs con los comandos del Lab 5.",
+      "item": [
+        {
+          "name": "01 · Validación sin JWT",
+          "item": [
+            {
+              "name": "01 · Sin JWT → 401",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "02 · Generar 200 y 429",
+          "item": [
+            {
+              "name": "01 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "05 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "06 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "07 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "03 · Correlación x-request-id",
+          "item": [
+            {
+              "name": "03 · Correlación x-request-id → 429",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Request-ID",
+                    "value": "mi-valor-propio"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "Inmediatamente después de agotar la cuota. Usa requestId en los comandos de logs, sin disparar más tráfico."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));",
+                      "const rid = pm.response.headers.get('x-request-id');",
+                      "pm.test('Request ID generado', () => pm.expect(rid).to.match(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i));",
+                      "pm.test('No conserva ID enviado', () => pm.expect(rid).not.to.equal('mi-valor-propio'));",
+                      "if (rid) pm.environment.set('requestId', rid);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 6 · GitOps",
+      "description": "Git, Application y reconciliación se validan con los comandos del Lab 6. Esta llamada solo comprueba continuidad del servicio, no demuestra Synced, self-heal ni revert.",
+      "item": [
+        {
+          "name": "01 · Bank API continúa disponible → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiBaseUrl}}/api/v1/party",
+            "description": "Espera una ventana libre y renueva jwt; no ejecutar durante una prueba de cuota."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 7 · Publicar en la nube",
+      "description": "Gateway cloud, DNS y certificado ACME preparados; NO desactives validación TLS para esta carpeta. No usa JWT, como el Gateway cloud del laboratorio.",
+      "item": [
+        {
+          "name": "01 · HTTPS público sin JWT → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{cloudBaseUrl}}/api/v1/party",
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 8 · Servicios externos",
+      "description": "Ruta /inventario/items reescribe a /v1/items externo. Ejecuta cada prueba después de su paso; la AuthPolicy de rol cambia el resultado de alice.",
+      "item": [
+        {
+          "name": "01 · Conectividad y ServiceEntry",
+          "item": [
+            {
+              "name": "01 · Antes de ServiceEntry → 500",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 500', () => pm.response.to.have.status(500));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Tras ServiceEntry → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                      "if (pm.response.code === 200) { const j = pm.response.json(); pm.test('Path externo reescrito', () => pm.expect(j.path).to.equal('/v1/items')); pm.test('JWT no enviado al externo', () => pm.expect(j.authorization_recibida).to.equal(false)); }"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Sin JWT → 401",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "02 · Cuota inventario 3/min antes del rol",
+          "item": [
+            {
+              "name": "01 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "03 · Autorización por roles RBAC",
+          "item": [
+            {
+              "name": "05 · Obtener JWT de bob",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "url": "{{keycloakIssuer}}/protocol/openid-connect/token",
+                "description": "Emisor y client preparados. Guarda bobJwt solo en el environment seleccionado; no imprime ni exporta el token.",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "client_id",
+                      "value": "{{keycloakClientId}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "grant_type",
+                      "value": "password",
+                      "type": "text"
+                    },
+                    {
+                      "key": "username",
+                      "value": "{{bobUser}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "password",
+                      "value": "{{bobPassword}}",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.environment.unset('bobJwt');"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                      "pm.environment.unset('bobJwt');",
+                      "if (pm.response.code === 200) {",
+                      "  let data; try { data = pm.response.json(); } catch (_) { data = {}; }",
+                      "  pm.test('Access token válido', () => pm.expect(data.access_token).to.be.a('string').and.not.empty);",
+                      "  if (typeof data.access_token === 'string' && data.access_token) pm.environment.set('bobJwt', data.access_token);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "06 · Tras política rol: alice → 403",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 403', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "07 · Tras política rol: bob → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bobJwt}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "08 · Bank API conserva alice → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 9 · Migrar desde 3scale",
+      "description": "HTTPRoute de migración y Secrets user-key preparados. Cada cuota se ejecuta en ventana nueva y después de aplicar la política correspondiente.",
+      "item": [
+        {
+          "name": "01 · Autenticación y Plan básico",
+          "item": [
+            {
+              "name": "01 · Sin user-key → 401",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · user-key inválida → 401",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "clave-que-no-existe"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Plan básico → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBasicKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "02 · Cuota Plan básico 5/min",
+          "item": [
+            {
+              "name": "01 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBasicKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBasicKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBasicKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBasicKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "05 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBasicKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "06 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBasicKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "03 · Plan premium y rutas no mapeadas",
+          "item": [
+            {
+              "name": "05 · Plan premium accounts → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationPremiumKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/accounts",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "06 · Ruta no mapeada → 404",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationPremiumKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/admin/audit-log",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 404', () => pm.response.to.have.status(404));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "04 · Cuota Plan Bronze después de política dinámica",
+          "item": [
+            {
+              "name": "01 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBronzeKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBronzeKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationBronzeKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "05 · Cuota Plan Silver después de política dinámica",
+          "item": [
+            {
+              "name": "01 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationSilverKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationSilverKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationSilverKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationSilverKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "05 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationSilverKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "06 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationSilverKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "06 · Plan Gold sin límite",
+          "item": [
+            {
+              "name": "01 · Gold → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationGoldKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Gold → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationGoldKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Gold → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationGoldKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Gold → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationGoldKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "05 · Gold → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationGoldKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "06 · Gold → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationGoldKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "07 · Gold → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationGoldKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "08 · Gold → 200",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "user-key",
+                    "value": "{{migrationGoldKey}}"
+                  }
+                ],
+                "url": "{{apiBaseUrl}}/3scale/api/v1/party",
+                "description": "",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 10 · Gobierno y ciclo de vida",
+      "description": "Ruta gobierno y cliente bank-m2m preparados. Las llamadas de scopes se ejecutan tras aplicar AuthPolicy de método/scopes; canary y cabeceras tras sus cambios de HTTPRoute.",
+      "item": [
+        {
+          "name": "01 · Token M2M bank:read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": "{{keycloakIssuer}}/protocol/openid-connect/token",
+            "description": "Emisor y client preparados. Guarda m2mReadJwt solo en el environment seleccionado; no imprime ni exporta el token.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "client_id",
+                  "value": "{{m2mClientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{m2mClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.unset('m2mReadJwt');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.unset('m2mReadJwt');",
+                  "if (pm.response.code === 200) {",
+                  "  let data; try { data = pm.response.json(); } catch (_) { data = {}; }",
+                  "  pm.test('Access token válido', () => pm.expect(data.access_token).to.be.a('string').and.not.empty);",
+                  "  if (typeof data.access_token === 'string' && data.access_token) pm.environment.set('m2mReadJwt', data.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 · Token M2M bank:write",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": "{{keycloakIssuer}}/protocol/openid-connect/token",
+            "description": "Emisor y client preparados. Guarda m2mWriteJwt solo en el environment seleccionado; no imprime ni exporta el token.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "client_id",
+                  "value": "{{m2mClientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{m2mClientSecret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "{{writeScope}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.unset('m2mWriteJwt');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.unset('m2mWriteJwt');",
+                  "if (pm.response.code === 200) {",
+                  "  let data; try { data = pm.response.json(); } catch (_) { data = {}; }",
+                  "  pm.test('Access token válido', () => pm.expect(data.access_token).to.be.a('string').and.not.empty);",
+                  "  if (typeof data.access_token === 'string' && data.access_token) pm.environment.set('m2mWriteJwt', data.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 · GET con bank:read → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiBaseUrl}}/gobierno/v1/saldo",
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{m2mReadJwt}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "04 · POST con solo read → 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/gobierno/v1/saldo",
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{m2mReadJwt}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"importe\": 10}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05 · POST con write → 200",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/gobierno/v1/saldo",
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{m2mWriteJwt}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"importe\": 10}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "06 · Alice sin scopes → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiBaseUrl}}/gobierno/v1/saldo",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "07 · Canary aleatorio → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiBaseUrl}}/gobierno/v1/saldo",
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{m2mReadJwt}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) pm.test('Versión del canary', () => pm.expect(['v1', 'v2']).to.include(pm.response.json().version));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "08 · Forzar v2 → 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-version",
+                "value": "v2"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/gobierno/v1/saldo",
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{m2mReadJwt}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) pm.test('Versión v2', () => pm.expect(pm.response.json().version).to.equal('v2'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 11 · Seguridad B2B y red",
+      "description": "Gateways separados socios y b2b preparados. Las pruebas IP usan la IP real de la máquina que ejecuta Postman; runner cloud puede tener otra IP. mTLS requiere configurar CRT/KEY locales para el hostname b2b en Settings > Certificates, nunca pegarlos en JSON.",
+      "item": [
+        {
+          "name": "01 · IP permitida y JWT → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{sociosBaseUrl}}/socio/v1/pedidos",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 · IP permitida sin JWT → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{sociosBaseUrl}}/socio/v1/pedidos",
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 · IP bloqueada y JWT → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{sociosBaseUrl}}/socio/v1/pedidos",
+            "description": "Solo durante bloqueo temporal configurado por el laboratorio."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "04 · mTLS con certificado socio-acme → 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{b2bBaseUrl}}/socio/v1/pedidos",
+            "description": "Configura certificado socio-acme.crt/key local. Sin certificado o con CA inválida falla TLS antes de HTTP; no se representa como un status HTTP.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) pm.test('Identidad de certificado', () => pm.expect(pm.response.json().x_client_common_name).to.be.a('string').and.not.empty);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 12 · Operación y resiliencia",
+      "description": "No provoca fallos ni escala componentes. Solo ejecutar pruebas de fallo cuando tú hayas iniciado y delimitado la demo del Lab 12; restaurar la plataforma antes de seguir.",
+      "item": [
+        {
+          "name": "01 · Resiliencia y parada de Authorino",
+          "item": [
+            {
+              "name": "01 · Party restaurado → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Inventario restaurado → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bobJwt}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Authorino detenido: Party → 500",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/api/v1/party",
+                "description": "Demo global opcional: solo mientras Authorino está detenido y jwt sigue vigente."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 500', () => pm.response.to.have.status(500));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Authorino detenido: inventario → 500",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bobJwt}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 500', () => pm.response.to.have.status(500));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "02 · Cuota limitador 3/min",
+          "item": [
+            {
+              "name": "01 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bobJwt}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "02 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bobJwt}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "03 · Cuota → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bobJwt}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "04 · Cuota → 429",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bobJwt}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 429', () => pm.response.to.have.status(429));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "03 · Resiliencia y parada de limitador",
+          "item": [
+            {
+              "name": "06 · Limitador detenido: inventario → 200",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{apiBaseUrl}}/inventario/items",
+                "description": "Demo global opcional: repite manualmente 6 veces dentro del minuto; debe seguir respondiendo 200. No demuestra fallo abierto con una sola petición.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bobJwt}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Bonus · Cuotas por tokens de IA",
+      "description": "Mock LLM y TokenRateLimitPolicy preparados; presupuesto 100 tokens/min, consumo variable 15–60 por respuesta. Repite manualmente; no tiene secuencia fija 200/429.",
+      "item": [
+        {
+          "name": "01 · Chat completions (200 o cuota 429)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/v1/chat/completions",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"model\":\"mock\",\"messages\":[{\"role\":\"user\",\"content\":\"hola\"}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP esperado', () => pm.expect([200, 429]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) pm.test('Consumo de tokens', () => pm.expect(pm.response.json().usage.total_tokens).to.be.a('number').and.above(0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

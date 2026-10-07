@@ -1,0 +1,35 @@
+# Lab 11 · paso 12 (capa 1): Envoy exige certificado de cliente firmado por la
+# CA de socios, solo en la cadena del hostname b2b (filterChain.sni); el
+# listener «socios» sigue sin pedir certificado.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: b2b-mtls-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ lab11_gateway }}
+  configPatches:
+    - applyTo: FILTER_CHAIN
+      match:
+        context: GATEWAY
+        listener:
+          portNumber: 443
+          filterChain:
+            sni: {{ lab11_b2b_host }}
+      patch:
+        operation: MERGE
+        value:
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              commonTlsContext:
+                validationContext:
+                  trustedCa:
+                    filename: /etc/certs/ca.crt
+              requireClientCertificate: true

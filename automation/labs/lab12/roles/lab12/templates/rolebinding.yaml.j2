@@ -1,0 +1,18 @@
+# monitoring-rules-edit en el namespace del Gateway: el rol edit no permite
+# crear PrometheusRule (el mismo RoleBinding que crea el rol tenant).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ lab_id }}-monitoring-rules
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+subjects:
+  - kind: User
+    name: {{ lab_id }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: monitoring-rules-edit
+  apiGroup: rbac.authorization.k8s.io

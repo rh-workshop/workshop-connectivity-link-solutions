@@ -1,0 +1,26 @@
+---
+- name: Leer únicamente Secrets requeridos sin imprimir datos
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: "{{ gate_secret }}"
+    namespace: "{{ keycloak_namespace }}"
+  loop: "{{ ['keycloak-db-secret', keycloak_admin_secret] }}"
+  loop_control:
+    loop_var: gate_secret
+  register: gate_keycloak_secrets
+  no_log: true
+
+- name: Exigir username y password preexistentes
+  ansible.builtin.assert:
+    that:
+      - gate_secret_result.resources | length == 1
+      - "'username' in gate_secret_result.resources[0].data | default({})"
+      - "'password' in gate_secret_result.resources[0].data | default({})"
+    fail_msg: Preparar los Secrets de Keycloak fuera de Git antes de sincronizar.
+    quiet: true
+  loop: "{{ gate_keycloak_secrets.results }}"
+  loop_control:
+    loop_var: gate_secret_result
+    label: Secret requerido
+  no_log: true

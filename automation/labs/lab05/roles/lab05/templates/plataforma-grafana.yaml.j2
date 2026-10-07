@@ -1,0 +1,121 @@
+# Grafana comunitario (SIN soporte de Red Hat) con datasource contra Thanos
+# Querier y los cuatro dashboards de RHCL por ID de Grafana.com
+# (lab5.adoc, «Grafana y los dashboards de RHCL · procedimiento del instructor»).
+# Las credenciales de administración las genera el operador en el Secret
+# {{ lab05_grafana_nombre }}-admin-credentials; no se escriben aquí.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: {{ lab05_grafana_nombre }}
+  namespace: {{ lab05_grafana_namespace }}
+  labels:
+    dashboards: rhcl
+spec:
+  config:
+    log:
+      mode: console
+    auth:
+      disable_login_form: "false"
+  persistentVolumeClaim:
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 2Gi
+  deployment:
+    spec:
+      template:
+        spec:
+          volumes:
+            - name: grafana-data
+              persistentVolumeClaim:
+                claimName: {{ lab05_grafana_nombre }}-pvc
+  route:
+    spec:
+      tls:
+        termination: edge
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-thanos
+  namespace: {{ lab05_grafana_namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: grafana-thanos-cluster-monitoring-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+  - kind: ServiceAccount
+    name: grafana-thanos
+    namespace: {{ lab05_grafana_namespace }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-thanos-token
+  namespace: {{ lab05_grafana_namespace }}
+  annotations:
+    kubernetes.io/service-account.name: grafana-thanos
+type: kubernetes.io/service-account-token
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: openshift-thanos
+  namespace: {{ lab05_grafana_namespace }}
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: rhcl
+  valuesFrom:
+    - targetPath: secureJsonData.httpHeaderValue1
+      valueFrom:
+        secretKeyRef:
+          name: grafana-thanos-token
+          key: token
+  datasource:
+    name: Prometheus
+    type: prometheus
+    access: proxy
+    uid: prometheus
+    url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+    isDefault: true
+    editable: false
+    jsonData:
+      tlsSkipVerify: true
+      httpHeaderName1: Authorization
+      timeInterval: 30s
+    secureJsonData:
+      httpHeaderValue1: "Bearer ${token}"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaFolder
+metadata:
+  name: rhcl
+  namespace: {{ lab05_grafana_namespace }}
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: rhcl
+  title: Connectivity Link
+{% for nombre, id in lab05_grafana_dashboards.items() %}
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: {{ nombre }}
+  namespace: {{ lab05_grafana_namespace }}
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: rhcl
+  folderRef: rhcl
+  grafanaCom:
+    id: {{ id }}
+{% endfor %}

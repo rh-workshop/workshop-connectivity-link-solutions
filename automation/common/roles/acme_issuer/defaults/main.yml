@@ -1,0 +1,18 @@
+---
+acme_issuer_verificar_solo: true
+acme_issuer_participant_mode: false
+acme_issuer_secret_bootstrap: false
+# false permite preparar únicamente el Secret antes de la primera sincronización GitOps.
+acme_issuer_esperar_ready: true
+acme_issuer_nombre: "{{ lab07_acme_issuer | default('letsencrypt-dns01') }}"
+# Lab 7 necesita confianza pública. Para ensayos usa staging con otro nombre/account.
+acme_servidor: https://acme-v02.api.letsencrypt.org/directory
+acme_email: ""
+acme_issuer_kind: ClusterIssuer
+acme_issuer_namespace: ""
+acme_secret_nombre: acme-route53-credentials
+acme_secret_namespace: cert-manager
+acme_cuenta_secret: "{{ acme_issuer_nombre }}-account"
+acme_route53_region: "{{ (dns_provider_datos | default({})).get('AWS_REGION', '') }}"
+# Obligatorias en configuración privada: acme_route53_hosted_zone_id, acme_dns_zone.
+# dns_provider_datos: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION (vault).

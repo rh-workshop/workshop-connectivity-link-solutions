@@ -1,0 +1,109 @@
+---
+- name: Validar la operación explícita
+  ansible.builtin.assert:
+    that:
+      - platform_git_repository_operation in ['verificar', 'instalar', 'publicar', 'backup', 'restaurar']
+      - platform_git_repository_argocd_namespace == platform_git_repository_argocd_identity.namespace
+      - platform_git_repository_repo_server_label == platform_git_repository_argocd_identity.repo_server_label
+    quiet: true
+
+- name: Instalar la fuente interna persistente sólo a petición del instructor
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: asegurar_recurso
+  vars:
+    recurso_definicion: "{{ platform_git_repository_resource }}"
+    recurso_actualizar_gestionado: "{{ platform_git_repository_resource.kind == 'NetworkPolicy' }}"
+  loop: "{{ lookup('ansible.builtin.template', 'repository.yml.j2') | from_yaml_all | list }}"
+  loop_control:
+    loop_var: platform_git_repository_resource
+    label: "{{ platform_git_repository_resource.kind }}/{{ platform_git_repository_resource.metadata.name }}"
+  when: platform_git_repository_operation == 'instalar'
+
+- name: Consultar el Deployment sin modificarlo
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ platform_git_repository_name }}"
+    namespace: "{{ platform_git_repository_namespace }}"
+  register: platform_git_repository_deployment
+
+- name: Exigir almacenamiento persistente y permisos restringidos
+  ansible.builtin.assert:
+    that:
+      - platform_git_repository_deployment.resources | length == 1
+      - not platform_git_repository_deployment.resources[0].spec.template.spec.automountServiceAccountToken | bool
+      - platform_git_repository_deployment.resources[0].spec.template.spec.volumes | selectattr('persistentVolumeClaim', 'defined') | list | length == 1
+    quiet: true
+
+- name: Buscar el pod de la fuente
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ platform_git_repository_namespace }}"
+    label_selectors: ["app={{ platform_git_repository_name }}"]
+    wait: true
+    wait_condition: {type: Ready, status: 'True'}
+    wait_timeout: 180
+  register: platform_git_repository_pods
+
+- name: Exigir un único pod para publicar o recuperar
+  ansible.builtin.assert:
+    that: platform_git_repository_pods.resources | length == 1
+    quiet: true
+
+- name: Consultar persistencia y aislamiento sin escribir
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.api }}"
+    kind: "{{ item.kind }}"
+    namespace: "{{ platform_git_repository_namespace }}"
+    name: "{{ platform_git_repository_name }}"
+  loop:
+    - {api: v1, kind: PersistentVolumeClaim}
+    - {api: networking.k8s.io/v1, kind: NetworkPolicy}
+  register: platform_git_repository_controls
+
+- name: Verificar PVC enlazado y política restringida al repo-server
+  ansible.builtin.assert:
+    that:
+      - platform_git_repository_controls.results[0].resources | length == 1
+      - platform_git_repository_controls.results[0].resources[0].status.phase == 'Bound'
+      - platform_git_repository_controls.results[1].resources | length == 1
+      - platform_git_repository_controls.results[1].resources[0].spec.ingress | length == 1
+      - platform_git_repository_controls.results[1].resources[0].spec.ingress[0].from | length == 1
+      - platform_git_repository_controls.results[1].resources[0].spec.ingress[0].from[0].namespaceSelector.matchLabels['kubernetes.io/metadata.name'] == platform_git_repository_argocd_namespace
+      - platform_git_repository_controls.results[1].resources[0].spec.ingress[0].from[0].podSelector.matchLabels['app.kubernetes.io/name'] == platform_git_repository_repo_server_label
+    quiet: true
+
+- name: Verificar que Git no anuncia publicación remota
+  kubernetes.core.k8s_exec:
+    namespace: "{{ platform_git_repository_namespace }}"
+    pod: "{{ platform_git_repository_pods.resources[0].metadata.name }}"
+    container: git
+    command: git -C /srv/git/platform.git config --get http.receivepack
+  register: platform_git_repository_receivepack
+  changed_when: false
+  failed_when: platform_git_repository_receivepack.stdout | trim != 'false'
+
+- name: Leer la API efectiva del cliente Ansible antes del transporte oc
+  kubernetes.core.k8s_cluster_info:
+  register: platform_git_repository_connection
+  no_log: true
+  when: platform_git_repository_operation in ['publicar', 'backup', 'restaurar']
+
+- name: Transportar el bundle privado por exec con RBAC del instructor
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ role_path }}/files/repository.py"
+      - "{{ platform_git_repository_operation }}"
+      - --expected-api
+      - "{{ platform_git_repository_connection.connection.host }}"
+      - --path
+      - "{{ platform_git_repository_bundle }}"
+      - --namespace
+      - "{{ platform_git_repository_namespace }}"
+      - --pod
+      - "{{ platform_git_repository_pods.resources[0].metadata.name }}"
+  when: platform_git_repository_operation in ['publicar', 'backup', 'restaurar']
+  no_log: true

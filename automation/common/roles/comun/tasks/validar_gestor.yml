@@ -1,0 +1,16 @@
+---
+- name: Validar el gestor de la plataforma
+  ansible.builtin.assert:
+    that: plataforma_gestor | default('ansible') in ['ansible', 'argocd']
+    fail_msg: plataforma_gestor debe ser ansible o argocd.
+    quiet: true
+
+- name: Impedir escrituras Ansible sobre la plataforma gestionada por Argo CD
+  ansible.builtin.assert:
+    that: >-
+      not plataforma_escritura_solicitada | default(false) | bool
+      or plataforma_gestor | default('ansible') == 'ansible'
+    fail_msg: >-
+      plataforma_gestor=argocd: Ansible no instala ni modifica recursos compartidos.
+      Usa el modo verificar_solo y cambia la plataforma en su fuente GitOps.
+    quiet: true

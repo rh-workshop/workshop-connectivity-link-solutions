@@ -1,0 +1,59 @@
+---
+# «Comprueba el resultado» del Lab 7 (paso 9): Service LoadBalancer con
+# dirección del proveedor, Gateway Programmed, DNSPolicy Enforced, Certificate
+# ACME Ready y, sobre todo, HTTPS con la confianza del sistema (curl sin -k).
+- name: Consultar Service, Gateway, Certificate y Secret TLS de la nube
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n | default(omit) }}"
+    namespace: "{{ wk_ns_gateway }}"
+    label_selectors: "{{ item.s | default(omit) }}"
+  loop:
+    - {v: v1, k: Service, s: ["gateway.networking.k8s.io/gateway-name={{ lab07_gateway }}"]}
+    - {v: gateway.networking.k8s.io/v1, k: Gateway, n: "{{ lab07_gateway }}"}
+    - {v: cert-manager.io/v1, k: Certificate, n: "{{ lab07_gateway }}-https"}
+    - {v: v1, k: Secret, n: "{{ lab07_gateway }}-tls"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n | default(lab07_gateway) }}"
+  register: lab07_recursos
+  no_log: "{{ item.k == 'Secret' }}"
+
+- name: Comprobar balanceador, dirección, emisor ACME y Secret TLS
+  ansible.builtin.assert:
+    that:
+      - lab07_svc.spec.type == 'LoadBalancer'
+      - lab07_svc.status.loadBalancer.ingress | default([]) | length > 0
+      - lab07_gw.status.addresses | default([]) | length > 0
+      - lab07_cert.spec.issuerRef.name == lab07_acme_issuer
+      - lab07_cert.spec.dnsNames == [lab07_host]
+      - lab07_recursos.results[3].resources | length == 1
+      - lab07_recursos.results[3].resources[0].type == 'kubernetes.io/tls'
+    fail_msg: >-
+      Lab 7 incompleto: Service={{ lab07_svc.spec.type | default('?') }}
+      {{ lab07_svc.status.loadBalancer.ingress | default([]) | to_json }}, Gateway={{ lab07_gw.status.addresses | default([]) | to_json }},
+      Certificate issuer={{ lab07_cert.spec.issuerRef.name | default('?') }} dnsNames={{ lab07_cert.spec.dnsNames | default([]) }}.
+    quiet: true
+  vars:
+    lab07_svc: "{{ lab07_recursos.results[0].resources | first | default({}) }}"
+    lab07_gw: "{{ lab07_recursos.results[1].resources | first | default({}) }}"
+    lab07_cert: "{{ lab07_recursos.results[2].resources | first | default({}) }}"
+
+- name: HTTPS con la confianza del sistema (sin -k) devuelve el JSON esperado de bank-api
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "HTTPS público https://{{ lab07_host }}/api/v1/party con certificado de confianza"
+    http_url: "https://{{ lab07_host }}/api/v1/party"
+    http_esperado: 200
+    http_validar_tls: true
+    http_json_contract: "{{ wk_bank_json_contract }}"
+    http_reintentos_prueba: "{{ http_reintentos }}"
+
+- name: Resumen del Lab 7
+  ansible.builtin.debug:
+    msg:
+      - "Lab 7 OK · https://{{ lab07_host }}/api/v1/party → 200 con certificado de confianza (validate_certs=true)"
+      - "Balanceador: {{ lab07_recursos.results[0].resources[0].status.loadBalancer.ingress | map(attribute='hostname', default='') | join(', ') }}"
+      - "DNSPolicy Enforced · DNSRecord {{ lab07_gateway }}-https Ready · Certificate emitido por {{ lab07_acme_issuer }}"

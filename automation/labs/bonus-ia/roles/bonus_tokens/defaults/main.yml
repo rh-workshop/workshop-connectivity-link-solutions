@@ -1,0 +1,12 @@
+---
+bonus_tokens_validar: true
+# Imagen del mock-LLM (la misma que fija 07-token-rate-limit/mock-llm-deployment.yaml.tpl).
+bonus_tokens_imagen: registry.access.redhat.com/ubi9/python-311@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
+# Cuota de la TokenRateLimitPolicy: tokens por ventana y por usuario.
+bonus_tokens_limite: 100
+bonus_tokens_ventana: 60s
+# Peticiones máximas para ver el 429 (el mock devuelve 15-60 tokens por respuesta:
+# con 100 tokens el corte llega entre la 2.ª y la 8.ª).
+bonus_tokens_max_peticiones: 12
+# API HTTP interna de Limitador: se consulta desde el pod Python del mock.
+bonus_limitador_url: http://limitador-limitador.kuadrant-system.svc:8080

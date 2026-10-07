@@ -1,0 +1,9 @@
+---
+- name: TLS · certificado compartido de Ingress con rollback explícito
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: ingress_certificate
+      tags: [ingress_certificate]

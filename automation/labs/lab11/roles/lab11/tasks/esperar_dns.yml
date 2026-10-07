@@ -1,0 +1,30 @@
+---
+# Espera a que resuelvan los dos hostnames del Gateway B2B mediante el mismo
+# auxiliar común: comprobación autoritativa (si está habilitada) y conexión
+# HTTPS local. b2b-… usa certificado de cliente porque el listener exige mTLS.
+- name: Leer los DNSRecord de los dos listeners
+  kubernetes.core.k8s_info:
+    api_version: kuadrant.io/v1alpha1
+    kind: DNSRecord
+    name: "{{ lab11_gateway }}-{{ item }}"
+    namespace: "{{ wk_ns_gateway }}"
+  loop: [https, socios]
+  register: lab11_dnsrecords
+
+- name: Esperar a que resuelva socios-…
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_dns
+  vars:
+    dns_nombre: "{{ lab11_soc_host }}"
+    dns_zona: "{{ (lab11_dnsrecords.results[1].resources | first | default({})).status.zoneDomainName | default(omit) }}"
+
+- name: Esperar a que resuelva b2b-… con el certificado del socio
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_dns
+  vars:
+    dns_nombre: "{{ lab11_b2b_host }}"
+    dns_zona: "{{ (lab11_dnsrecords.results[0].resources | first | default({})).status.zoneDomainName | default(omit) }}"
+    dns_client_cert: "{{ lab11_dir_local }}/socio-acme.crt"
+    dns_client_key: "{{ lab11_dir_local }}/socio-acme.key"

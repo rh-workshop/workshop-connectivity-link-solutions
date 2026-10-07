@@ -1,0 +1,63 @@
+# Datos exclusivamente sintéticos; defaults se leen de cada rol, nunca inventarios.
+shared:
+  lab_id: demo
+  wk_ns_app: atp-demo
+  wk_ns_gateway: gateway-demo
+  wk_gateway: connectivity-link-gw-demo
+  wk_lab_host: api-demo.workshop.example.test
+  wk_keycloak_issuer: https://identity.example.test/realms/realm-demo
+  wk_realm: realm-demo
+  wk_zona: workshop.example.test
+  gateway_class: istio
+  dns_provider_secret: dns-provider-demo
+  tls_issuer_name: workshop-selfsigned
+roles:
+  lab04b:
+    lab04b_rol: customer
+    wk_lab04b_api_key: DEMO-NOT-A-REAL-API-KEY
+  lab05:
+    lab05_og_crear: true
+    lab05_operador:
+      nombre: tempo-product
+      namespace: openshift-tempo-operator
+      canal: stable
+      fuente: redhat-operators
+      og_all_namespaces: true
+  lab06:
+    lab06_application: rhcl-policies-demo
+    lab06_git_path: gitops/demo
+    lab06_repo_argocd: http://git-politicas.atp-demo.svc.cluster.local:8080/politicas.git
+    lab06_limite: 5
+  lab07:
+    lab07_gateway: connectivity-link-cloud-demo
+    lab07_host: api-demo.cloud.example.test
+  lab08:
+    lab08_ext_host: inventory.example.test
+    lab08_ext_port: 8080
+  lab09:
+    item: {app: app-bronze, plan: bronze, plan_id: bronze}
+  lab11:
+    lab11_gateway: b2b-gw-demo
+    lab11_soc_host: socios-demo.workshop.example.test
+    lab11_b2b_host: b2b-demo.workshop.example.test
+    wk_lab11_ip: 192.0.2.10
+    lab11_bloque: 192.0.2.0/24
+    lab11_socios_modo: jwt
+    lab11_socios_predicado: 'source.address.split(":")[0] == "192.0.2.10"'
+    lab11_ca_pem: |
+      -----BEGIN CERTIFICATE-----
+      DEMO-NOT-A-REAL-CERTIFICATE
+      -----END CERTIFICATE-----
+  lab12:
+    lab12_diag_fase: base
+# Cada escenario vuelve a renderizar la plantilla real; no duplica manifiestos.
+variants:
+  labs/lab05/roles/lab05/templates/operador.yaml.j2:
+    - {lab05_og_crear: false}
+    - lab05_operador: {nombre: grafana-operator, namespace: grafana-rhcl, canal: v5, fuente: community-operators, og_all_namespaces: false}
+  labs/lab09/roles/lab09/templates/app-secret.yaml.j2:
+    - item: {app: app-basico, plan: basico}
+  labs/lab11/roles/lab11/templates/socios-auth.yaml.j2:
+    - {lab11_socios_modo: ip}
+  labs/lab12/roles/lab12/templates/diag.yaml.j2:
+    - {lab12_diag_fase: emisor_no_listo}

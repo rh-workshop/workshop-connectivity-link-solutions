@@ -1,0 +1,22 @@
+# RateLimitPolicy: 5 req/min por identidad. El contador auth.identity.user_id lo
+# inyecta la AuthPolicy que autentica la ruta (JWT: sub · API key: anotación).
+# Nombre con guion bajo: CEL interpretaría «user-id» como una resta.
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: api-route-rl-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: api-route-{{ lab_id }}
+  limits:
+    "per-user-per-minute":
+      rates:
+        - limit: 5
+          window: 60s
+      counters:
+        - expression: auth.identity.user_id

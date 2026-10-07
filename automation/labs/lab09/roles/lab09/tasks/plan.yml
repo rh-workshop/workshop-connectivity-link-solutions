@@ -1,0 +1,14 @@
+---
+# Ventana limpia: N respuestas admitidas con contrato JSON y el 429 siguiente.
+# La cuota y su ventana se leen de la política efectiva ya comprobada.
+- name: "Comprobar exactamente la cuota del plan {{ lab09_plan }}"
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_cuota_exacta
+  vars:
+    cuota_url: "{{ lab09_url_plan | default(wk_api3_url ~ '/api/v1/party') }}"
+    cuota_cabeceras:
+      user-key: "k-{{ lab09_plan }}-{{ lab_id }}"
+    cuota_limite: "{{ lab09_limites[lab09_plan] }}"
+    cuota_ventana_segundos: "{{ lab09_rlp_actual.resources[0].spec.limits['plan-' ~ lab09_plan].rates[0].window[:-1] | int }}"
+    cuota_json_contract: "{{ lab09_contrato_plan | default(wk_bank_json_contract) }}"

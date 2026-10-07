@@ -1,0 +1,25 @@
+# Lab 12 · paso 9: alerta cuando más del {{ (lab12_umbral * 100) | int }} % de las respuestas de un backend
+# son 429. Va en el namespace del GATEWAY: UWM inyecta namespace=<ns de la
+# regla> y las métricas de Istio llevan el namespace del PodMonitor.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: api-429-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  groups:
+    - name: api-{{ lab_id }}
+      rules:
+        - alert: CuotaAgotada
+          expr: |
+            sum by (destination_service_name) (rate(istio_requests_total{destination_service_namespace="{{ wk_ns_app }}", response_code="429"}[2m]))
+              /
+            (sum by (destination_service_name) (rate(istio_requests_total{destination_service_namespace="{{ wk_ns_app }}"}[2m])) > 0) > {{ lab12_umbral }}
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Mas del 50 % de las respuestas de {% raw %}{{ $labels.destination_service_name }}{% endraw %} son 429"
+            description: "Los consumidores agotan la cuota: revisar la RateLimitPolicy o el plan del cliente."

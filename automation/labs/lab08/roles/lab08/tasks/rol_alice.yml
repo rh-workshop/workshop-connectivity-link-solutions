@@ -1,0 +1,21 @@
+---
+# Asigna o retira el rol de realm «inventario» a alice con el módulo de
+# Keycloak (lo que el instructor haría en Users → alice → Role mapping).
+#   vars: lab08_rol_estado (present | absent)
+- name: Resolver las credenciales del admin de Keycloak
+  ansible.builtin.include_role:
+    name: keycloak_realm
+    tasks_from: credenciales
+
+- name: "Rol inventario de alice en {{ wk_realm }} → {{ lab08_rol_estado }}"
+  community.general.keycloak_user_rolemapping:
+    auth_keycloak_url: "{{ wk_keycloak_url }}"
+    auth_realm: "{{ keycloak_admin_realm }}"
+    auth_username: "{{ wk_kc_admin_usuario }}"
+    auth_password: "{{ wk_kc_admin_password }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    realm: "{{ wk_realm }}"
+    target_username: alice
+    roles:
+      - name: inventario
+    state: "{{ lab08_rol_estado }}"

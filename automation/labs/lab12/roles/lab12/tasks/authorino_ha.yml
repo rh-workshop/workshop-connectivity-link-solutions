@@ -1,0 +1,264 @@
+---
+# Independiente de main/demos: no ejecutar concurrentemente con otras demos.
+- name: Exigir opt-in y exclusividad explícita antes de cambios globales
+  ansible.builtin.assert:
+    that:
+      - lab12_authorino_ha | default(false) | bool
+      - lab12_authorino_ha_exclusivo | default(false) | bool
+      - not lab12_demos | bool
+      - plataforma_gestor | default('ansible') == 'ansible'
+    fail_msg: Esta demostración exige HA opt-in, clúster exclusivo, gestor Ansible y ninguna otra demo concurrente.
+    quiet: true
+
+- name: Avisar del alcance global y del reparto por conexión
+  ansible.builtin.debug:
+    msg: Escalar Authorino afecta todas las APIs; se medirán tres pods y sus contadores, sin exigir reparto uniforme.
+
+- name: Leer CR original y cuota publicada usada para la carga
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.version }}"
+    kind: "{{ item.kind }}"
+    name: "{{ item.name }}"
+    namespace: "{{ item.namespace }}"
+  loop:
+    - {version: operator.authorino.kuadrant.io/v1beta1, kind: Authorino, name: authorino, namespace: kuadrant-system}
+    - {version: kuadrant.io/v1, kind: RateLimitPolicy, name: "api-route-rl-{{ lab_id }}", namespace: "{{ wk_ns_app }}"}
+  register: lab12_ha_original
+
+- name: Exigir CR único y cuota de bank antes de escribir
+  ansible.builtin.assert:
+    that:
+      - lab12_ha_original.results[0].resources | length == 1
+      - lab12_ha_original.results[1].resources | length == 1
+      - >-
+        lab12_ha_original.results[1].resources[0].spec.limits['per-user-per-minute'].rates == [{'limit': 5, 'window': '60s'}]
+      - >-
+        lab12_ha_original.results[1].resources[0].spec.limits['per-user-per-minute'].counters == [{'expression': 'auth.identity.user_id'}]
+    fail_msg: Requiere Lab4A restaurado a JWT y cuota 5/min; no crea prerrequisitos ni modifica Limitador.
+    quiet: true
+
+- name: Leer configuración efectiva de conexiones hacia Authorino
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.version }}"
+    kind: "{{ item.kind }}"
+    name: "{{ item.name }}"
+    namespace: "{{ item.namespace }}"
+  loop:
+    - {version: networking.istio.io/v1alpha3, kind: EnvoyFilter, name: "kuadrant-auth-{{ wk_gateway }}", namespace: "{{ wk_ns_gateway }}"}
+    - {version: v1, kind: Service, name: authorino-authorino-authorization, namespace: kuadrant-system}
+  register: lab12_ha_connection
+
+- name: Exigir el modelo publicado de HTTP2 sobre Service ClusterIP
+  ansible.builtin.assert:
+    that:
+      - lab12_ha_connection.results[0].resources | length == 1
+      - lab12_ha_connection.results[1].resources | length == 1
+      - lab12_ha_connection.results[1].resources[0].spec.type == 'ClusterIP'
+      - lab12_ha_cluster | length == 1
+      - lab12_ha_cluster[0].type == 'STRICT_DNS'
+      - lab12_ha_cluster[0].lb_policy == 'ROUND_ROBIN'
+      - lab12_ha_cluster[0].http2_protocol_options is defined
+      - lab12_ha_cluster[0].load_assignment.endpoints | length == 1
+      - lab12_ha_cluster[0].load_assignment.endpoints[0].lb_endpoints | length == 1
+      - lab12_ha_cluster[0].load_assignment.endpoints[0].lb_endpoints[0].endpoint.address.socket_address.address == 'authorino-authorino-authorization.kuadrant-system.svc.cluster.local'
+      - lab12_ha_cluster[0].load_assignment.endpoints[0].lb_endpoints[0].endpoint.address.socket_address.port_value == 50051
+    quiet: true
+  vars:
+    lab12_ha_cluster: "{{ lab12_ha_connection.results[0].resources[0].spec.configPatches | selectattr('applyTo', 'equalto', 'CLUSTER') | map(attribute='patch.value') | selectattr('name', 'equalto', 'kuadrant-auth-service') | list }}"
+
+- name: Guardar spec original e identidad para restaurar únicamente el mismo CR
+  ansible.builtin.set_fact:
+    lab12_orig_authorino: "{{ lab12_ha_original.results[0].resources[0].spec }}"
+    lab12_ha_uid: "{{ lab12_ha_original.results[0].resources[0].metadata.uid }}"
+
+- name: Medir HA con restauración independiente garantizada
+  block:
+    - name: Escalar el CR con precondición UID sin adoptar el Deployment
+      kubernetes.core.k8s_json_patch:
+        api_version: operator.authorino.kuadrant.io/v1beta1
+        kind: Authorino
+        name: authorino
+        namespace: kuadrant-system
+        patch:
+          - {op: test, path: /metadata/uid, value: "{{ lab12_ha_uid }}"}
+          - {op: add, path: /spec/replicas, value: 3}
+
+    - name: Esperar tres réplicas listas mediante el helper canónico
+      ansible.builtin.include_tasks: esperar_despliegue.yml
+      vars: {dep_nombre: authorino, dep_replicas: 3}
+
+    - name: Leer pods y endpoints de autorización
+      kubernetes.core.k8s_info:
+        api_version: "{{ item.version }}"
+        kind: "{{ item.kind }}"
+        namespace: kuadrant-system
+        label_selectors: "{{ item.labels }}"
+      loop:
+        - {version: v1, kind: Pod, labels: [authorino-resource=authorino]}
+        - {version: discovery.k8s.io/v1, kind: EndpointSlice, labels: [kubernetes.io/service-name=authorino-authorino-authorization]}
+      register: lab12_ha_topology
+
+    - name: Exigir tres pods Ready en nodos distintos y endpoints asociados
+      ansible.builtin.assert:
+        that:
+          - lab12_ha_pods.resources | length == 3
+          - lab12_ha_pods.resources | map(attribute='spec.nodeName') | unique | list | length == 3
+          - lab12_ha_pods.resources | map(attribute='status.conditions') | flatten | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 3
+          - lab12_ha_endpoints | selectattr('conditions.ready', 'equalto', true) | list | length == 3
+          - lab12_ha_endpoints | map(attribute='targetRef.uid') | sort | list == lab12_ha_pods.resources | map(attribute='metadata.uid') | sort | list
+        quiet: true
+      vars:
+        lab12_ha_pods: "{{ lab12_ha_topology.results[0] }}"
+        lab12_ha_endpoints: "{{ lab12_ha_topology.results[1].resources | map(attribute='endpoints') | flatten }}"
+
+    - name: Conservar inventario y limpiar métricas previas de esta ejecución
+      ansible.builtin.set_fact:
+        lab12_ha_pods: "{{ lab12_ha_topology.results[0] }}"
+        lab12_ha_metrics: {}
+
+    - name: Tomar baseline de enforcement por pod
+      ansible.builtin.include_tasks: authorino_ha_metrics.yml
+
+    - name: Conservar baseline antes de la carga
+      ansible.builtin.set_fact:
+        lab12_ha_baseline: "{{ lab12_ha_metrics }}"
+
+    - name: Esperar una ventana limpia sin consumir la cuota
+      ansible.builtin.pause:
+        seconds: 61
+
+    - name: Refrescar JWT de alice después de la espera
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars: {token_usuario: alice}
+
+    - name: Leer baseline de conexiones y consultas de Envoy
+      ansible.builtin.include_tasks: authorino_ha_envoy.yml
+
+    - name: Conservar baseline de consultas de autorización
+      ansible.builtin.set_fact:
+        lab12_ha_envoy_baseline: "{{ lab12_ha_envoy }}"
+
+    - name: Enviar una muestra finita de 300 llamadas con 20 workers
+      wk_http_workload:
+        url: "{{ wk_api_url }}"
+        headers: {Authorization: "Bearer {{ wk_token }}"}
+        count: 300
+        parallelism: 20
+        budget: 45
+      register: lab12_ha_workload
+      no_log: true
+
+    - name: Exigir cuota publicada dentro de una única ventana
+      ansible.builtin.assert:
+        that:
+          - lab12_ha_workload.duration | float < 60
+          - lab12_ha_workload.results | length == 300
+          - lab12_ha_workload.results | selectattr('status', 'equalto', 200) | list | length == 5
+          - lab12_ha_workload.results | selectattr('status', 'equalto', 429) | list | length == 295
+        fail_msg: La muestra no demuestra 5 respuestas 200 y 295 respuestas 429 dentro de 60 segundos.
+        quiet: true
+      no_log: true
+
+    - name: Validar contenido de cada 200 ya recibido sin generar más tráfico
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: validar_http_contrato
+        apply: {no_log: true}
+      vars:
+        comun_http: "{{ lab12_ha_response }}"
+        http_json_contract: "{{ wk_bank_json_contract }}"
+        http_no_log: true
+      loop: "{{ lab12_ha_workload.results | selectattr('status', 'equalto', 200) | list }}"
+      loop_control:
+        loop_var: lab12_ha_response
+        label: respuesta-200-cacheada
+      no_log: true
+
+    - name: Leer consultas de Envoy posteriores a la carga
+      ansible.builtin.include_tasks: authorino_ha_envoy.yml
+
+    - name: Exigir 300 consultas adicionales al servicio de autorización
+      ansible.builtin.assert:
+        that:
+          - lab12_ha_envoy.rq_total | int - lab12_ha_envoy_baseline.rq_total | int >= 300
+        quiet: true
+
+    - name: Releer identidades para detectar reinicios durante la muestra
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: kuadrant-system
+        label_selectors: [authorino-resource=authorino]
+      register: lab12_ha_pods_after
+
+    - name: Exigir los mismos tres pods para comparar contadores
+      ansible.builtin.assert:
+        that:
+          - lab12_ha_pods_after.resources | map(attribute='metadata.uid') | sort | list == lab12_ha_pods.resources | map(attribute='metadata.uid') | sort | list
+        quiet: true
+
+    - name: Leer incremento de enforcement por pod después de la carga
+      ansible.builtin.include_tasks: authorino_ha_metrics.yml
+
+    - name: Exigir incremento real sin imponer uniformidad del reparto
+      ansible.builtin.assert:
+        that:
+          - lab12_ha_metrics.values() | sum > lab12_ha_baseline.values() | sum
+          - lab12_ha_metrics.keys() | list | sort == lab12_ha_baseline.keys() | list | sort
+        fail_msg: No hay incremento de enforcement en los tres pods inventariados.
+        quiet: true
+
+    - name: Informar contadores observados sin prometer reparto igual por pod
+      ansible.builtin.debug:
+        msg: "5 JSON válidos y 295 respuestas 429; Envoy baseline={{ lab12_ha_envoy_baseline }} final={{ lab12_ha_envoy }}; authconfigs enforced baseline={{ lab12_ha_baseline }} final={{ lab12_ha_metrics }}. Las conexiones HTTP/2 no implican reparto uniforme."
+  always:
+    - name: Releer identidad antes de restaurar sin adoptar un CR recreado
+      kubernetes.core.k8s_info:
+        api_version: operator.authorino.kuadrant.io/v1beta1
+        kind: Authorino
+        name: authorino
+        namespace: kuadrant-system
+      register: lab12_ha_restore
+
+    - name: Impedir restauración sobre otra identidad
+      ansible.builtin.assert:
+        that:
+          - lab12_ha_restore.resources | length == 1
+          - lab12_ha_restore.resources[0].metadata.uid == lab12_ha_uid
+        quiet: true
+
+    - name: Restaurar réplicas con precondición atómica de identidad
+      kubernetes.core.k8s_json_patch:
+        api_version: operator.authorino.kuadrant.io/v1beta1
+        kind: Authorino
+        name: authorino
+        namespace: kuadrant-system
+        patch: >-
+          {{ [{'op': 'test', 'path': '/metadata/uid', 'value': lab12_ha_uid}] +
+          ([{'op': 'add', 'path': '/spec/replicas', 'value': lab12_orig_authorino.replicas}]
+          if lab12_orig_authorino.replicas is defined else [{'op': 'remove', 'path': '/spec/replicas'}]) }}
+      when: lab12_ha_restore.resources[0].spec.replicas | default('ausente') != lab12_orig_authorino.replicas | default('ausente')
+
+    - name: Esperar despliegue restaurado mediante helper canónico
+      ansible.builtin.include_tasks: esperar_despliegue.yml
+      vars:
+        dep_nombre: authorino
+        dep_replicas: "{{ lab12_orig_authorino.replicas | default(1) }}"
+
+    - name: Releer CR restaurado
+      kubernetes.core.k8s_info:
+        api_version: operator.authorino.kuadrant.io/v1beta1
+        kind: Authorino
+        name: authorino
+        namespace: kuadrant-system
+      register: lab12_ha_restored
+
+    - name: Exigir identidad y spec originales completos
+      ansible.builtin.assert:
+        that:
+          - lab12_ha_restored.resources | length == 1
+          - lab12_ha_restored.resources[0].metadata.uid == lab12_ha_uid
+          - lab12_ha_restored.resources[0].spec == lab12_orig_authorino
+        quiet: true

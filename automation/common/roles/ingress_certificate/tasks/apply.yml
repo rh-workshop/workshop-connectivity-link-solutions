@@ -1,0 +1,44 @@
+---
+- name: Exigir evidencia TLS local válida antes del backup o patch
+  ansible.builtin.assert:
+    that:
+      - ingress_tls_evidence.validated | default(false) | bool
+      - ingress_tls_evidence.domain == ingress_domain
+      - ingress_tls_evidence.sha256 | length == 64
+    quiet: true
+
+- name: Releer la referencia original después de validar TLS y antes del backup
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: IngressController
+    name: default
+    namespace: openshift-ingress-operator
+  register: ingress_tls_controller
+
+- name: Guardar la referencia original fuera de Git antes de modificar Ingress
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ role_path }}/files/ingress_tls.py"
+      - backup
+      - --backup
+      - "{{ ingress_certificate_backup }}"
+      - --domain
+      - "{{ ingress_domain }}"
+      - --cluster-uid
+      - "{{ ingress_tls_uid }}"
+    stdin: "{{ ingress_tls_controller.resources[0] | to_json }}"
+  no_log: true
+
+- name: Cambiar únicamente spec.defaultCertificate.name
+  kubernetes.core.k8s:
+    state: patched
+    api_version: operator.openshift.io/v1
+    kind: IngressController
+    name: default
+    namespace: openshift-ingress-operator
+    merge_type: merge
+    definition:
+      spec:
+        defaultCertificate:
+          name: "{{ ingress_certificate_secret }}"

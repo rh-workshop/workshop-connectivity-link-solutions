@@ -1,0 +1,73 @@
+---
+# Lab 9 · Migrar una API desde 3scale (lab9-migracion-3scale.adoc).
+# Estado final del lab: ruta con las mapping rules, cinco Applications
+# (básico, premium, bronze, silver, gold), AuthPolicy user-key y la
+# RateLimitPolicy completa con un límite por plan.
+
+- name: Fijar la URL base de la API migrada
+  ansible.builtin.set_fact:
+    wk_api3_url: "https://{{ wk_lab_host }}/3scale"
+
+- name: Publicar las mapping rules como HTTPRoute
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: httproute.yaml.j2
+
+- name: Esperar a que el Gateway acepte la ruta migrada
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_ruta
+  vars:
+    ruta_nombre: "bank-3scale-route-{{ lab_id }}"
+
+- name: Migrar las Applications a Secrets con su user_key original
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: app-secret.yaml.j2
+  loop: "{{ lab09_apps }}"
+  loop_control:
+    label: "{{ item.app }} ({{ item.plan }})"
+  no_log: true
+
+- name: Migrar la autenticación user_key a la AuthPolicy de ruta
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: auth-policy.yaml.j2
+
+- name: Migrar los planes a la RateLimitPolicy
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: rate-limit.yaml.j2
+
+- name: Esperar a las políticas de la API migrada Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: "{{ item.k }}"
+    espera_nombre: "{{ item.n }}"
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Enforced
+  loop:
+    - {k: AuthPolicy, n: "bank-3scale-auth-{{ lab_id }}"}
+    - {k: RateLimitPolicy, n: "bank-3scale-rl-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Validar el Lab 9
+  ansible.builtin.import_tasks: validar.yml
+  when: lab09_validar | bool
+  tags: [validar]

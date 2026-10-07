@@ -1,0 +1,4 @@
+---
+validation_access_verificar_solo: true
+validation_access_service_account: validation-reader
+validation_access_binding: "cl-validation-reader-{{ lab_id }}"

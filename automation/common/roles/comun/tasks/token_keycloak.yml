@@ -1,0 +1,26 @@
+---
+# Pide un access token a Keycloak con password grant (cliente público
+# connectivity-link), igual que el paso «Obtener el token» del Lab 4A.
+#   vars: token_usuario  ->  deja el token en el hecho wk_token
+- name: "Pedir a Keycloak un token para {{ token_usuario }}"
+  ansible.builtin.uri:
+    url: "{{ wk_keycloak_issuer }}/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      client_id: connectivity-link
+      grant_type: password
+      username: "{{ token_usuario }}"
+      password: "{{ keycloak_usuarios_password[token_usuario] }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    status_code: 200
+  register: comun_token
+  retries: 5
+  delay: 3
+  until: comun_token.status == 200
+  no_log: true
+
+- name: Guardar el token
+  ansible.builtin.set_fact:
+    wk_token: "{{ comun_token.json.access_token }}"
+  no_log: true

@@ -1,0 +1,22 @@
+# Lab 10 · paso 3: el techo del equipo de plataforma. overrides en el Gateway:
+# se impone a todas sus rutas aunque tengan una política más laxa.
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: techo-global-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ wk_gateway }}
+  overrides:
+    limits:
+      "techo-por-identidad":
+        rates:
+          - limit: {{ lab10_techo }}
+            window: 60s
+        counters:
+          - expression: auth.identity.user_id

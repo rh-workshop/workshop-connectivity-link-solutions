@@ -1,0 +1,29 @@
+---
+- name: Consultar los namespaces del participante
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    label_selectors:
+      - "gateway-tenant={{ lab_id }}"
+  register: tenant_ns
+
+- name: Comprobar namespaces y label gateway-tenant
+  ansible.builtin.assert:
+    that:
+      - wk_ns_app in (tenant_ns.resources | map(attribute='metadata.name') | list)
+      - wk_ns_gateway in (tenant_ns.resources | map(attribute='metadata.name') | list)
+    fail_msg: "Faltan {{ wk_ns_app }} o {{ wk_ns_gateway }} con la label gateway-tenant={{ lab_id }}."
+    success_msg: "Slice listo: {{ wk_ns_app }} y {{ wk_ns_gateway }} con gateway-tenant={{ lab_id }}."
+
+- name: Comprobar el Secret DNS en el namespace del Gateway
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: "{{ dns_provider_secret }}"
+    namespace: "{{ wk_ns_gateway }}"
+  register: tenant_dns
+  no_log: true
+  failed_when: tenant_dns.resources | default([]) | length == 0
+  when:
+    - entrada_modo == 'loadbalancer'
+    - dns_policy_habilitada | bool

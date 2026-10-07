@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: keycloak_realm
+  author: workshop-connectivity-link
+  description: Realm OIDC del participante con community.general.keycloak_*.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

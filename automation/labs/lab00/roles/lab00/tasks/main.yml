@@ -1,0 +1,194 @@
+---
+- name: Exigir IdP explícito y guards de identidad antes de leer credenciales
+  ansible.builtin.assert:
+    that:
+      - participant_idp_name | length > 0
+      - participant_idp_secret_name | length > 0
+      - openshift_api_esperada | default('') | length > 0
+      - openshift_cluster_uid_esperado | default('') | length > 0
+      - participant_access_operation in ['append', 'remove']
+    quiet: true
+
+- name: Leer OAuth sin cambiar su configuración
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: OAuth
+    name: cluster
+  register: participant_access_oauth
+  no_log: true
+
+- name: Seleccionar exclusivamente el IdP indicado por el instructor
+  ansible.builtin.set_fact:
+    participant_access_idps: "{{ participant_access_oauth.resources[0].spec.identityProviders | selectattr('name', 'equalto', participant_idp_name) | list }}"
+  no_log: true
+
+- name: Rechazar IdP ausente, diferente o con mapping no admitido
+  ansible.builtin.assert:
+    that:
+      - participant_access_idps | length == 1
+      - participant_access_idps[0].type == 'HTPasswd'
+      - participant_access_idps[0].mappingMethod in ['claim', 'add']
+      - participant_access_idps[0].htpasswd.fileData.name == participant_idp_secret_name
+    quiet: true
+  no_log: true
+
+- name: Leer la entrada User sin modificarla
+  kubernetes.core.k8s_info:
+    api_version: user.openshift.io/v1
+    kind: User
+    name: "{{ lab_id }}"
+  register: participant_access_users
+
+- name: Leer la Identity exacta sin modificarla
+  kubernetes.core.k8s_info:
+    api_version: user.openshift.io/v1
+    kind: Identity
+    name: "{{ participant_idp_name }}:{{ lab_id }}"
+  register: participant_access_identities
+
+- name: Revisar privilegios sólo durante el alta; no bloquear rollback del hash propio
+  when: participant_access_operation == 'append'
+  block:
+    - name: Leer vínculos globales para rechazar privilegios previos
+      kubernetes.core.k8s_info:
+        api_version: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+      register: participant_access_bindings
+
+    - name: Leer grupos para detectar privilegios administrativos heredados
+      kubernetes.core.k8s_info:
+        api_version: user.openshift.io/v1
+        kind: Group
+      register: participant_access_groups
+
+    - name: Inicializar grupos de autenticación del participante
+      ansible.builtin.set_fact:
+        participant_access_group_names: ['system:authenticated', 'system:authenticated:oauth']
+
+    - name: Registrar sólo grupos que contienen explícitamente al participante
+      ansible.builtin.set_fact:
+        participant_access_group_names: "{{ participant_access_group_names + [item.metadata.name] }}"
+      when: lab_id in (item.users | default([]))
+      loop: "{{ participant_access_groups.resources }}"
+      no_log: true
+
+    - name: Rechazar cluster-admin heredado de un grupo
+      ansible.builtin.assert:
+        that: >-
+          item.subjects | default([]) | selectattr('kind', 'equalto', 'Group')
+          | selectattr('name', 'in', participant_access_group_names) | list | length == 0
+        quiet: true
+      when: item.roleRef.kind == 'ClusterRole' and item.roleRef.name == 'cluster-admin'
+      loop: "{{ participant_access_bindings.resources }}"
+      no_log: true
+
+    - name: Rechazar membresías adicionales hasta revisar sus permisos efectivos
+      ansible.builtin.assert:
+        that:
+          - participant_access_group_names | difference(['system:authenticated', 'system:authenticated:oauth']) | length == 0
+          - (participant_access_users.resources | first | default({})).groups | default([]) | difference(['system:authenticated', 'system:authenticated:oauth']) | length == 0
+        quiet: true
+
+    - name: Seleccionar vínculos globales directos del participante
+      ansible.builtin.set_fact:
+        participant_access_direct_bindings: []
+
+    - name: Registrar vínculos con sujeto User exacto
+      ansible.builtin.set_fact:
+        participant_access_direct_bindings: "{{ participant_access_direct_bindings + [item] }}"
+      when: item.subjects | default([]) | selectattr('kind', 'equalto', 'User') | selectattr('name', 'equalto', lab_id) | list | length > 0
+      loop: "{{ participant_access_bindings.resources }}"
+      no_log: true
+
+    - name: Admitir sólo el vínculo canónico de lectura del tenant
+      ansible.builtin.assert:
+        that:
+          - item.metadata.name == lab_id ~ '-gatewayclass-view'
+          - item.metadata.labels['workshop.user'] | default('') == lab_id
+          - item.metadata.labels['workshop.module'] | default('') == 'connectivity-link'
+          - item.roleRef == {'apiGroup':'rbac.authorization.k8s.io', 'kind':'ClusterRole', 'name':'workshop-gatewayclass-view'}
+          - item.subjects == [{'kind':'User', 'name':lab_id, 'apiGroup':'rbac.authorization.k8s.io'}]
+        quiet: true
+      loop: "{{ participant_access_direct_bindings }}"
+      no_log: true
+
+    - name: Leer las reglas actuales del ClusterRole canónico sin cambiarlo
+      kubernetes.core.k8s_info:
+        api_version: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        name: workshop-gatewayclass-view
+      register: participant_access_gateway_role
+      when: participant_access_direct_bindings | length > 0
+
+    - name: Exigir las tres reglas canónicas de lectura sin permisos adicionales
+      ansible.builtin.assert:
+        that:
+          - participant_access_gateway_role.resources | length == 1
+          - participant_access_gateway_role.resources[0].rules | length == 3
+          - participant_access_gateway_role.resources[0].rules | selectattr('apiGroups', 'equalto', ['apiextensions.k8s.io']) | selectattr('resources', 'equalto', ['customresourcedefinitions']) | list | length == 1
+          - participant_access_gateway_role.resources[0].rules | selectattr('apiGroups', 'equalto', ['gateway.networking.k8s.io']) | selectattr('resources', 'equalto', ['gatewayclasses']) | list | length == 1
+          - participant_access_gateway_role.resources[0].rules | selectattr('apiGroups', 'equalto', ['gateway.networking.k8s.io']) | selectattr('resources', 'equalto', ['gatewayclasses/status']) | list | length == 1
+        quiet: true
+      when: participant_access_direct_bindings | length > 0
+
+    - name: Verificar verbos exactos y rechazar campos RBAC adicionales
+      ansible.builtin.assert:
+        that:
+          - item.keys() | list | sort == ['apiGroups', 'resources', 'verbs']
+          - >-
+            item.verbs | sort == (['get', 'list'] if item.resources == ['customresourcedefinitions']
+              else (['get', 'list', 'watch'] if item.resources == ['gatewayclasses'] else ['get']))
+        quiet: true
+      loop: "{{ participant_access_gateway_role.resources[0].rules if participant_access_direct_bindings | length > 0 else [] }}"
+      no_log: true
+
+- name: No adoptar User ni Identity existentes durante el alta
+  ansible.builtin.assert:
+    that:
+      - participant_access_users.resources | length == 0
+      - participant_access_identities.resources | length == 0
+    quiet: true
+  when:
+    - not participant_access_verificar_solo | bool
+    - participant_access_operation == 'append'
+
+- name: Leer el Secret exacto del IdP con UID, resourceVersion y bytes originales
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: "{{ participant_access_idps[0].htpasswd.fileData.name }}"
+    namespace: openshift-config
+  register: participant_access_secret
+  no_log: true
+
+- name: Exigir un Secret HTPasswd válido
+  ansible.builtin.assert:
+    that:
+      - participant_access_secret.resources | length == 1
+      - participant_access_secret.resources[0].data.htpasswd is defined
+    quiet: true
+  no_log: true
+
+- name: Validar o preparar sólo la entrada del participante con backup privado
+  participant_htpasswd:
+    snapshot: "{{ participant_access_secret.resources[0] }}"
+    username: "{{ lab_id }}"
+    idp: "{{ participant_idp_name }}"
+    operation: "{{ 'verify' if participant_access_verificar_solo | bool else participant_access_operation }}"
+    backup_path: "{{ participant_access_backup_path }}"
+    password: "{{ participant_password | default(omit) }}"
+    binary: "{{ participant_access_htpasswd_binary }}"
+  register: participant_access_plan
+  no_log: true
+
+- name: Aplicar CAS de UID, resourceVersion y contenido; conflicto aborta sin restaurar
+  kubernetes.core.k8s_json_patch:
+    api_version: v1
+    kind: Secret
+    name: "{{ participant_access_idps[0].htpasswd.fileData.name }}"
+    namespace: openshift-config
+    patch: "{{ participant_access_plan.patch }}"
+  when:
+    - not participant_access_verificar_solo | bool
+    - not ansible_check_mode
+  no_log: true

@@ -1,0 +1,97 @@
+# Lab 11 · paso 3: backend eco b2b-api (devuelve X-Forwarded-For,
+# X-Envoy-External-Address y X-Client-Common-Name) y dos rutas, cada una atada
+# a su listener con sectionName.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: b2b-api-src
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+data:
+  server.py: |
+    {{ lookup('ansible.builtin.file', role_path ~ '/../../../../common/roles/comun/files/http-echo-server.py') | indent(4) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: b2b-api
+  namespace: {{ wk_ns_app }}
+  labels:
+    app: b2b-api
+    workshop.user: {{ lab_id }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: b2b-api
+  template:
+    metadata:
+      labels:
+        app: b2b-api
+    spec:
+      volumes:
+        - name: src
+          configMap:
+            name: b2b-api-src
+      containers:
+        - name: api
+          image: {{ lab11_imagen }}
+          command: ["python", "/opt/app/server.py"]
+          env:
+            - name: API_VERSION
+              value: "v1"
+            - name: SERVICE_NAME
+              value: "b2b-api"
+          volumeMounts:
+            - name: src
+              mountPath: /opt/app
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: b2b-api
+  namespace: {{ wk_ns_app }}
+  labels:
+    app: b2b-api
+    workshop.user: {{ lab_id }}
+spec:
+  selector:
+    app: b2b-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+{% for r in [{'n': 'socios-route', 's': 'socios', 'h': lab11_soc_host}, {'n': 'b2b-route', 's': 'https', 'h': lab11_b2b_host}] %}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ r.n }}-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ lab11_gateway }}
+      namespace: {{ wk_ns_gateway }}
+      sectionName: {{ r.s }}
+  hostnames:
+    - {{ r.h }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: b2b-api
+          port: 8080
+{% endfor %}

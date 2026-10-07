@@ -1,0 +1,17 @@
+---
+# Crea un objeto solo si no existe; si ya existe NO lo modifica (ni merge ni
+# apply): la plataforma compartida se respeta tal cual está.
+#   vars: lab05_obj (dict con apiVersion, kind, metadata.name[, metadata.namespace])
+- name: "Comprobar si existe {{ lab05_obj.kind }}/{{ lab05_obj.metadata.name }}"
+  kubernetes.core.k8s_info:
+    api_version: "{{ lab05_obj.apiVersion }}"
+    kind: "{{ lab05_obj.kind }}"
+    name: "{{ lab05_obj.metadata.name }}"
+    namespace: "{{ lab05_obj.metadata.namespace | default(omit) }}"
+  register: lab05_obj_info
+
+- name: "Crear {{ lab05_obj.kind }}/{{ lab05_obj.metadata.name }} (no existía)"
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lab05_obj }}"
+  when: lab05_obj_info.resources | length == 0

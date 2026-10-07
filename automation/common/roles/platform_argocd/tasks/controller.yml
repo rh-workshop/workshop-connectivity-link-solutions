@@ -1,0 +1,43 @@
+---
+- name: Consultar operaciones antes de cambiar el controlador
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+  register: platform_argocd_controller_apps
+  no_log: true
+
+- name: Planificar sólo strict a normal y respaldar el campo privado
+  platform_argocd_scope:
+    operation: plan_controller
+    identity: "{{ wk_platform_argocd }}"
+    instance_uid: "{{ platform_argocd_instance.resources[0].metadata.uid }}"
+    instance: "{{ platform_argocd_instance.resources[0] }}"
+    owned_labels: "{{ platform_argocd_labels }}"
+    applications: "{{ platform_argocd_controller_apps.resources }}"
+    backup_path: "{{ platform_argocd_controller_backup_path }}"
+  register: platform_argocd_controller_plan
+  no_log: true
+
+- name: Cambiar sólo spec.controller.respectRBAC en el CR con UID y versión
+  kubernetes.core.k8s_json_patch:
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: "{{ wk_platform_argocd.name }}"
+    namespace: "{{ wk_platform_argocd.namespace }}"
+    patch: "{{ platform_argocd_controller_plan.patch }}"
+  when: platform_argocd_controller_plan.patch | length > 0
+  no_log: true
+
+- name: Esperar la configuración efectiva normal reconciliada por el operador
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: argocd-cm
+    namespace: "{{ wk_platform_argocd.namespace }}"
+  register: platform_argocd_controller_cm
+  until: (platform_argocd_controller_cm.resources | first | default({})).data['resource.respectRBAC'] | default('') == 'normal'
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"
+
+- name: Renovar caché del controlador dedicado cuando corresponde
+  ansible.builtin.include_tasks: controller_restart.yml

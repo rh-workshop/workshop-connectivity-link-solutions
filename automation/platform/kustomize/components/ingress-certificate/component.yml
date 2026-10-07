@@ -1,0 +1,6 @@
+phase: ingress-certificate
+source: canonical_acme_issuer_and_local_certificate_template
+generated_resource: manifests.yaml
+sync: manual
+enabled_by_default: false
+gate: cd automation/ansible && ansible-playbook playbooks/platform-gate.yml -e platform_gate_phase=ingress-certificate

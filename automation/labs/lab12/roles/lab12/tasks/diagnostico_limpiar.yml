@@ -1,0 +1,55 @@
+---
+# Limpieza de lo diag-* (DNSPolicy primero, como en el Lab 3). Idempotente:
+# si no existe nada, no hace nada.
+- name: Borrar políticas y ruta diag-* del namespace de la aplicación
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_app }}"
+    wait: true
+  loop:
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "diag-auth-huerfana-{{ lab_id }}"}
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "diag-auth-ruta-{{ lab_id }}"}
+    - {v: gateway.networking.k8s.io/v1, k: HTTPRoute, n: "diag-ruta-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar la DNSPolicy diag-*
+  kubernetes.core.k8s:
+    state: absent
+    api_version: kuadrant.io/v1
+    kind: DNSPolicy
+    name: "diag-dns-{{ lab_id }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+
+- name: Esperar a que desaparezcan los DNSRecord diag-*
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_borrado
+  vars:
+    borrado_api_version: kuadrant.io/v1alpha1
+    borrado_kind: DNSRecord
+    borrado_namespace: "{{ wk_ns_gateway }}"
+    borrado_nombre: "diag-gw-{{ lab_id }}-{{ item }}"
+  loop: [https, http]
+
+- name: Borrar TLSPolicy, AuthPolicy, Issuer, Certificate, Gateway y Secret diag-*
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+  loop:
+    - {v: kuadrant.io/v1, k: TLSPolicy, n: "diag-tls-{{ lab_id }}"}
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "diag-auth-gw-{{ lab_id }}"}
+    - {v: cert-manager.io/v1, k: Certificate, n: "diag-gw-{{ lab_id }}-https"}
+    - {v: cert-manager.io/v1, k: Issuer, n: "diag-ca-sin-secret-{{ lab_id }}"}
+    - {v: gateway.networking.k8s.io/v1, k: Gateway, n: "diag-gw-{{ lab_id }}"}
+    - {v: v1, k: Secret, n: "diag-gw-{{ lab_id }}-tls"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"

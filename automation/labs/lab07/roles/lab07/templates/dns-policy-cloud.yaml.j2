@@ -1,0 +1,15 @@
+# DNSPolicy: escribe {{ lab07_host }} en la zona pública (paso 6).
+apiVersion: kuadrant.io/v1
+kind: DNSPolicy
+metadata:
+  name: dns-policy-cloud-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ lab07_gateway }}
+  providerRefs:
+    - name: {{ lab07_dns_secret }}

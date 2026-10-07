@@ -1,0 +1,26 @@
+---
+- name: Esperar los CSV antes de consultar APIs de operandos
+  ansible.builtin.include_tasks: esperar_csv.yml
+  loop: "{{ plataforma_operadores_activos }}"
+  loop_control:
+    loop_var: operador
+    label: "{{ operador.nombre }}"
+  vars:
+    csv_namespace: "{{ operador.namespace }}"
+    csv_prefijo: "{{ operador.csv_prefijo }}"
+
+- name: Esperar CRDs Established antes de consultar o crear CRs
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apiextensions.k8s.io/v1
+    espera_kind: CustomResourceDefinition
+    espera_nombre: "{{ crd_plataforma }}"
+    espera_condicion: Established
+  loop: >-
+    {{ ['kuadrants.kuadrant.io', 'clusterissuers.cert-manager.io',
+        'certmanagers.operator.openshift.io', 'keycloaks.k8s.keycloak.org']
+       + (['istios.sailoperator.io', 'istiocnis.sailoperator.io'] if gateway_class == 'istio' else []) }}
+  loop_control:
+    loop_var: crd_plataforma

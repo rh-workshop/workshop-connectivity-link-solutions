@@ -1,0 +1,6 @@
+---
+# Lab 2 es de inspección: la GatewayClass la publica el proveedor (OSSM 3 o el
+# Ingress Operator). No se crea nada.
+- name: Inspeccionar la GatewayClass
+  ansible.builtin.import_tasks: validar.yml
+  tags: [validar]

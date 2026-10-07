@@ -1,0 +1,10 @@
+# Configuración de ejemplo; sustituye la cuenta y zona con datos autorizados.
+expected_account_id = "000000000000"
+participant_id      = "user1"
+zone_name           = "example.com"
+region              = "us-east-2"
+workshop_zone       = "labs.example.com"
+cloud_zone          = "cloud.example.com"
+# Alternativa: zone_id = "ZEXAMPLE" y omitir zone_name.
+# Para dominios distintos, declara nombres exactos o descendientes del participante.
+# record_patterns = ["api-user1.labs.example.com", "*.api-user1.labs.example.com", "_acme-challenge.api-user1.labs.example.com"]

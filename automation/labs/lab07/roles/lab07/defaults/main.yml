@@ -1,0 +1,27 @@
+---
+lab07_validar: true
+
+# Zona pública de la nube que entrega el instructor (CLOUD_ZONE del lab). El
+# hostname de la API queda en api-<lab_id>.<zona> (CLOUD_HOST).
+lab07_zona: "cloud.{{ wk_zona }}"
+lab07_gateway: "connectivity-link-cloud-{{ lab_id }}"
+lab07_host: "api-{{ lab_id }}.{{ lab07_zona }}"
+# ClusterIssuer ACME (DNS-01) preparado por el instructor; solo se verifica.
+lab07_acme_issuer: "letsencrypt-dns01-{{ lab_id }}"
+
+# Secret del proveedor DNS de la zona pública (en gateway-<lab_id>). Fuentes,
+# por orden: lab07_dns_provider_datos (vault) · dns_provider_datos (vault) ·
+# copia de lab07_dns_secret_origen en lab07_dns_secret_origen_namespace.
+lab07_dns_secret: dns-provider-cloud
+lab07_dns_tipo: "{{ dns_provider_tipo }}"
+lab07_dns_secret_origen: dns-provider-cloud
+lab07_dns_secret_origen_namespace: "{{ dns_provider_secret_origen_namespace }}"
+# lab07_dns_provider_datos: {AWS_ACCESS_KEY_ID: ..., AWS_SECRET_ACCESS_KEY: ..., AWS_REGION: ...}
+
+# El segundo Gateway necesita un segundo Service LoadBalancer: si la cuota
+# services.loadbalancers del namespace del Gateway es menor, se sube a este valor.
+# La cuota la gestiona el rol tenant (3 por defecto); la limpieza no la toca.
+lab07_cuota_balanceadores: "2"
+
+# El desafío DNS-01 tarda más que el emisor autofirmado (validado: ~1-2 min).
+lab07_certificado_reintentos: 120      # x 5 s

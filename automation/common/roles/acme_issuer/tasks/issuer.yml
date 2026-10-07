@@ -1,0 +1,43 @@
+---
+- name: Rechazar creación directa del emisor cuando Argo CD lo gestiona
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: "{{ not acme_issuer_participant_mode | default(false) | bool }}"
+
+- name: Comprobar la propiedad del emisor existente
+  kubernetes.core.k8s_info:
+    api_version: cert-manager.io/v1
+    kind: "{{ acme_issuer_kind }}"
+    name: "{{ acme_issuer_nombre }}"
+    namespace: "{{ acme_issuer_namespace if acme_issuer_kind == 'Issuer' else omit }}"
+  register: acme_issuer_previo
+
+- name: Rechazar adopción implícita de emisores ajenos
+  ansible.builtin.assert:
+    that: >-
+      acme_issuer_previo.resources | length == 0 or
+      ((acme_issuer_previo.resources[0].metadata.labels | default({})).get('workshop.module', '') == 'connectivity-link'
+       and (acme_issuer_previo.resources[0].metadata.labels | default({})).get('workshop.component', '') == 'acme-issuer')
+    fail_msg: El ClusterIssuer existente no pertenece explícitamente al rol ACME.
+    quiet: true
+
+- name: Rechazar cambios o adopción del emisor de otro participante
+  ansible.builtin.assert:
+    that: >-
+      acme_issuer_previo.resources | length == 0 or
+      ((acme_issuer_previo.resources[0].metadata.labels | default({})).get('workshop.user', '') == lab_id
+       and (acme_issuer_previo.resources[0].metadata.annotations | default({})).get('argocd.argoproj.io/tracking-id', '') == ''
+       and acme_issuer_previo.resources[0].spec == (lookup('ansible.builtin.template', 'cluster-issuer.yaml.j2') | from_yaml).spec)
+    quiet: true
+  when: acme_issuer_participant_mode | default(false) | bool
+
+- name: Reconciliar únicamente el ClusterIssuer propio
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: asegurar_recurso
+  vars:
+    recurso_definicion: "{{ lookup('ansible.builtin.template', 'cluster-issuer.yaml.j2') | from_yaml }}"
+    recurso_actualizar_gestionado: true
+  when: not acme_issuer_participant_mode | default(false) | bool or acme_issuer_previo.resources | length == 0

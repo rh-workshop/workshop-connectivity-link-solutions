@@ -1,0 +1,37 @@
+---
+- name: Validar el gestor y rechazar escrituras del emisor gestionado por Argo CD
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: "{{ not acme_issuer_verificar_solo | bool and not acme_issuer_participant_mode | default(false) | bool }}"
+
+- name: Validar los parámetros públicos del emisor
+  ansible.builtin.import_tasks: validar.yml
+
+- name: Esperar la API de emisores cert-manager
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apiextensions.k8s.io/v1
+    espera_kind: CustomResourceDefinition
+    espera_nombre: "{{ 'issuers.cert-manager.io' if acme_issuer_kind == 'Issuer' else 'clusterissuers.cert-manager.io' }}"
+    espera_condicion: Established
+
+- name: Esperar el webhook de cert-manager antes del bootstrap
+  ansible.builtin.include_role:
+    name: plataforma
+    tasks_from: esperar_webhook_cm
+
+- name: Preparar el Secret mediante bootstrap explícito o instalación Ansible
+  ansible.builtin.include_tasks: secret.yml
+  when: acme_issuer_participant_mode | default(false) | bool or acme_issuer_secret_bootstrap | bool or not acme_issuer_verificar_solo | bool
+
+- name: Reconciliar el emisor únicamente cuando Ansible gestiona la plataforma
+  ansible.builtin.include_tasks: issuer.yml
+  when: not acme_issuer_verificar_solo | bool
+
+- name: Verificar configuración y disponibilidad del emisor
+  ansible.builtin.include_tasks: verificar.yml
+  when: acme_issuer_esperar_ready | bool

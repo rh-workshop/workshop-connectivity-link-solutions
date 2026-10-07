@@ -1,0 +1,11 @@
+---
+# Slice del participante: namespaces, labels, cuotas, RBAC y Secret DNS.
+#   ansible-playbook playbooks/tenant.yml -e lab_id=user7
+- name: Tenant · slice del participante
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]

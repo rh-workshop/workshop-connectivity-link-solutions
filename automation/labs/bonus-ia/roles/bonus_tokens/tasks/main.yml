@@ -1,0 +1,126 @@
+---
+# Bonus · API de IA y límites por tokens (https://rh-workshop.github.io/workshop-connectivity-link/ia-practica.html).
+
+- name: Desplegar el mock-LLM (formato OpenAI con usage.total_tokens)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: mock-llm.yaml.j2
+
+- name: Esperar a que el mock-LLM esté disponible
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apps/v1
+    espera_kind: Deployment
+    espera_nombre: mock-llm
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Available
+
+- name: Publicar la ruta /v1 en el Gateway del participante
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: llm-route.yaml.j2
+
+- name: Esperar a que el Gateway acepte la ruta de IA (Accepted y ResolvedRefs)
+  block:
+    - name: Consultar el estado de la HTTPRoute llm-route
+      kubernetes.core.k8s_info:
+        api_version: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        name: "llm-route-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+      register: bonus_ruta
+      vars:
+        bonus_conds: >-
+          {{ bonus_ruta.resources[0].status.parents | default([])
+             | selectattr('parentRef.name', 'equalto', wk_gateway)
+             | map(attribute='conditions') | flatten
+             | selectattr('status', 'equalto', 'True') | map(attribute='type') | list
+             if bonus_ruta.resources | default([]) | length > 0 else [] }}
+      until: "'Accepted' in bonus_conds and 'ResolvedRefs' in bonus_conds"
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Fallar con el estado de la HTTPRoute de IA
+      ansible.builtin.fail:
+        msg: >-
+          La HTTPRoute llm-route-{{ lab_id }} no quedó Accepted/ResolvedRefs en {{ wk_gateway }}:
+          {{ bonus_ruta.resources[0].status.parents | default('sin estado') | to_json }}
+
+# Hallazgo documentado en ia-practica.adoc: al reestructurar los límites de una
+# TokenRateLimitPolicy, Limitador puede conservar el valor cargado antes aunque
+# la política diga otro y esté Enforced. Por eso, si la política existe con otro
+# spec, se BORRA, se espera a que el operador retire sus límites del CR Limitador
+# y se crea de nuevo (nunca se edita en caliente).
+- name: Leer la TokenRateLimitPolicy existente
+  kubernetes.core.k8s_info:
+    api_version: kuadrant.io/v1alpha1
+    kind: TokenRateLimitPolicy
+    name: "mock-llm-tokens-{{ lab_id }}"
+    namespace: "{{ wk_ns_app }}"
+  register: bonus_trlp_actual
+
+- name: Decidir si hay que recrear la política
+  ansible.builtin.set_fact:
+    bonus_trlp_recrear: >-
+      {{ bonus_trlp_actual.resources | length > 0 and
+         (bonus_trlp_actual.resources[0].spec.limits != bonus_trlp_deseada.spec.limits
+          or bonus_trlp_actual.resources[0].spec.targetRef != bonus_trlp_deseada.spec.targetRef) }}
+  vars:
+    bonus_trlp_deseada: "{{ lookup('ansible.builtin.template', 'token-rate-limit-policy.yaml.j2') | from_yaml }}"
+
+- name: Recrear la política limpia (distinto spec)
+  when: bonus_trlp_recrear | bool
+  block:
+    - name: Borrar la TokenRateLimitPolicy con el spec anterior
+      kubernetes.core.k8s:
+        state: absent
+        api_version: kuadrant.io/v1alpha1
+        kind: TokenRateLimitPolicy
+        name: "mock-llm-tokens-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+        wait: true
+
+    - name: Esperar a que el operador retire sus límites del CR Limitador
+      kubernetes.core.k8s_info:
+        api_version: limitador.kuadrant.io/v1alpha1
+        kind: Limitador
+        name: limitador
+        namespace: kuadrant-system
+      register: bonus_limitador
+      until: >-
+        bonus_limitador.resources[0].spec.limits | default([])
+        | selectattr('namespace', 'equalto', wk_ns_app ~ '/llm-route-' ~ lab_id) | list | length == 0
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+
+- name: Configurar la cuota por tokens (TokenRateLimitPolicy)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: token-rate-limit-policy.yaml.j2
+
+- name: Esperar a la TokenRateLimitPolicy Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1alpha1
+    espera_kind: TokenRateLimitPolicy
+    espera_nombre: "mock-llm-tokens-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Enforced
+
+- name: Validar el Bonus
+  ansible.builtin.import_tasks: validar.yml
+  when: bonus_tokens_validar | bool
+  tags: [validar]

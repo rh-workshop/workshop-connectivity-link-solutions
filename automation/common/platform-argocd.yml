@@ -1,0 +1,6 @@
+# Identidad única del controlador de plataforma; la instancia de Lab 6 es aparte.
+namespace: cl-platform-argocd
+name: cl-platform
+service_account: cl-platform-argocd-application-controller
+repo_server_label: cl-platform-repo-server
+repo_server_container: argocd-repo-server

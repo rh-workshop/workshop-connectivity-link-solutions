@@ -1,0 +1,40 @@
+---
+# Paso 5 del lab: dos tokens client_credentials del client bank-m2m, sin y con
+# el scope opcional bank:write. El secret se lee de Keycloak con su módulo
+# (keycloak_clientsecret_info) y nunca se escribe en disco ni en el log.
+- name: Resolver las credenciales del admin de Keycloak
+  ansible.builtin.include_role:
+    name: keycloak_realm
+    tasks_from: credenciales
+
+- name: Leer el secret del client bank-m2m
+  community.general.keycloak_clientsecret_info:
+    auth_keycloak_url: "{{ wk_keycloak_url }}"
+    auth_realm: "{{ keycloak_admin_realm }}"
+    auth_username: "{{ wk_kc_admin_usuario }}"
+    auth_password: "{{ wk_kc_admin_password }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    realm: "{{ wk_realm }}"
+    client_id: bank-m2m
+  register: lab10_m2m_secret
+  no_log: true
+
+- name: Pedir los tokens client_credentials (sin y con bank:write)
+  ansible.builtin.uri:
+    url: "{{ wk_keycloak_issuer }}/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body: "{{ {'grant_type': 'client_credentials', 'client_id': 'bank-m2m',
+               'client_secret': lab10_m2m_secret.clientsecret_info.value}
+             | combine({'scope': item} if item | length > 0 else {}) }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    status_code: 200
+  loop: ["", "bank:write"]
+  register: lab10_m2m_tokens
+  no_log: true
+
+- name: Guardar los tokens máquina a máquina
+  ansible.builtin.set_fact:
+    lab10_token_m2m: "{{ lab10_m2m_tokens.results[0].json.access_token }}"
+    lab10_token_m2m_w: "{{ lab10_m2m_tokens.results[1].json.access_token }}"
+  no_log: true

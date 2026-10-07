@@ -1,0 +1,29 @@
+---
+# Genera una señal 429 repitiendo peticiones; no demuestra el límite exacto ni
+# una ventana limpia. Lab05 lo usa para observabilidad. Para comprobar el valor
+# publicado del límite, usar probar_cuota_exacta.yml.
+#   vars: cuota_url, cuota_cabeceras, cuota_max (por defecto 10)
+- name: Agotar la cuota hasta recibir 429
+  block:
+    - name: Enviar peticiones seguidas hasta el 429
+      ansible.builtin.uri:
+        url: "{{ cuota_url }}"
+        headers: "{{ cuota_cabeceras }}"
+        validate_certs: false
+        status_code: [200, 429]
+        timeout: 15
+      register: comun_cuota
+      until: comun_cuota.status == 429
+      retries: "{{ cuota_max | default(10) }}"
+      delay: 0
+      no_log: true
+  rescue:
+    - name: Fallar si la cuota no se aplica
+      ansible.builtin.fail:
+        msg: >-
+          La RateLimitPolicy no devolvió 429 tras {{ cuota_max | default(10) }} peticiones a {{ cuota_url }}
+          (último código {{ comun_cuota.status | default('desconocido') }}).
+
+- name: Informar del 429 recibido
+  ansible.builtin.debug:
+    msg: "Cuota aplicada: HTTP 429 tras {{ comun_cuota.attempts | default(1) }} peticiones."

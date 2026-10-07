@@ -1,0 +1,73 @@
+---
+# Repo Git del participante (lab06_git_modo=externo). Se clona SIEMPRE en una
+# carpeta temporal de la máquina de control para comprobar que la ruta solo
+# contiene manifiestos del namespace del participante: un path equivocado
+# (p. ej. el de otro participante) haría que Argo CD gestionara recursos ajenos.
+- name: Crear una carpeta temporal para la copia de trabajo
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: wk-lab06-
+  register: lab06_git_dir
+  changed_when: false
+
+- name: Componer la URL de clonado (con credencial si se dio por vault)
+  ansible.builtin.set_fact:
+    lab06_git_url_clonado: >-
+      {{ lab06_git_push_url | regex_replace('^https://', 'https://' ~ (lab06_git_usuario | default('git') | urlencode)
+         ~ ':' ~ (lab06_git_token | urlencode) ~ '@')
+         if lab06_git_token is defined and lab06_git_push_url is match('^https://') else lab06_git_push_url }}
+  no_log: true
+
+- name: Clonar el repo del participante
+  ansible.builtin.git:
+    repo: "{{ lab06_git_url_clonado }}"
+    dest: "{{ lab06_git_dir.path }}/repo"
+    version: "{{ lab06_git_revision }}"
+    depth: 20
+  changed_when: false
+  no_log: true
+
+- name: Buscar los manifiestos de la ruta sincronizada
+  ansible.builtin.find:
+    paths: "{{ lab06_git_dir.path }}/repo/{{ lab06_git_path }}"
+    patterns: ["*.yaml", "*.yml", "*.json"]
+  register: lab06_git_ficheros
+
+- name: Exigir manifiestos en la ruta si no se va a empujar nada
+  ansible.builtin.assert:
+    that: lab06_git_push | bool or lab06_git_ficheros.files | length > 0
+    fail_msg: "La ruta {{ lab06_git_path }} de {{ lab06_git_repo_url }} ({{ lab06_git_revision }}) no tiene manifiestos."
+    quiet: true
+
+- name: Leer los manifiestos de la ruta
+  ansible.builtin.set_fact:
+    lab06_git_docs: >-
+      {{ query('ansible.builtin.file', *(lab06_git_ficheros.files | map(attribute='path') | list))
+         | map('from_yaml_all') | map('list') | flatten | select | list }}
+
+- name: Comprobar que la ruta solo gestiona recursos de {{ wk_ns_app }}
+  ansible.builtin.assert:
+    that: lab06_git_ns_ajenos | length == 0
+    fail_msg: >-
+      La ruta {{ lab06_git_path }} contiene recursos de otros namespaces ({{ lab06_git_ns_ajenos }}). Argo CD los
+      gestionaría en nombre de {{ lab_id }}: usa la carpeta del participante.
+    quiet: true
+  vars:
+    lab06_git_ns_ajenos: >-
+      {{ lab06_git_docs | map(attribute='metadata') | selectattr('namespace', 'defined')
+         | map(attribute='namespace') | reject('equalto', wk_ns_app) | unique | list }}
+
+- name: Leer el límite versionado de la RateLimitPolicy del participante
+  ansible.builtin.set_fact:
+    lab06_limite_repo: "{{ lab06_rlp_repo[0].spec.limits['per-user-per-minute'].rates[0].limit }}"
+  vars:
+    lab06_rlp_repo: >-
+      {{ lab06_git_docs | selectattr('kind', 'equalto', 'RateLimitPolicy')
+         | selectattr('metadata.name', 'equalto', 'api-route-rl-' ~ lab_id) | list }}
+  when:
+    - not lab06_git_push | bool
+    - lab06_rlp_repo | length > 0
+
+- name: Fijar la URL que leerá Argo CD
+  ansible.builtin.set_fact:
+    lab06_repo_argocd: "{{ lab06_git_repo_url }}"

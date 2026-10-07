@@ -1,0 +1,137 @@
+# RBAC del participante (bootstrap-users.sh): edit + workshop-policies-edit en
+# sus dos namespaces, monitoring-rules-edit en el del Gateway (Lab 12), lectura
+# de operadores (Lab 1), GatewayClasses (Lab 2) y observabilidad local (Lab 5).
+{% for ns in [wk_ns_app, wk_ns_gateway] %}
+{% for rb in [{'n': lab_id ~ '-edit', 'r': 'edit'}, {'n': lab_id ~ '-workshop-policies', 'r': 'workshop-policies-edit'}] %}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ rb.n }}
+  namespace: {{ ns }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+subjects:
+  - kind: User
+    name: {{ lab_id }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: {{ rb.r }}
+  apiGroup: rbac.authorization.k8s.io
+{% endfor %}
+{% endfor %}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ lab_id }}-monitoring-rules
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+subjects:
+  - kind: User
+    name: {{ lab_id }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: monitoring-rules-edit
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ lab_id }}-observability
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+rules:
+  - apiGroups: [monitoring.coreos.com]
+    resources: [podmonitors]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ lab_id }}-observability
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+subjects:
+  - kind: User
+    name: {{ lab_id }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: {{ lab_id }}-observability
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ lab_id }}-authorino-logs-source
+  namespace: kuadrant-system
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [authorino]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ lab_id }}-authorino-logs-source
+  namespace: kuadrant-system
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+subjects:
+  - kind: User
+    name: {{ lab_id }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: {{ lab_id }}-authorino-logs-source
+  apiGroup: rbac.authorization.k8s.io
+{% for ns in ['kuadrant-system', tenant_ns_cert_manager] %}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ lab_id }}-operator-view
+  namespace: {{ ns }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+subjects:
+  - kind: User
+    name: {{ lab_id }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: workshop-operator-view
+  apiGroup: rbac.authorization.k8s.io
+{% endfor %}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ lab_id }}-gatewayclass-view
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+subjects:
+  - kind: User
+    name: {{ lab_id }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: workshop-gatewayclass-view
+  apiGroup: rbac.authorization.k8s.io

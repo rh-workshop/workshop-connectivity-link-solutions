@@ -1,0 +1,45 @@
+---
+- name: Comprobar propiedad antes de crear la instancia compartida
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: true
+
+- name: Comprobar si existe el CR Keycloak
+  kubernetes.core.k8s_info:
+    api_version: k8s.keycloak.org/v2beta1
+    kind: Keycloak
+    name: "{{ keycloak_cr_nombre }}"
+    namespace: "{{ keycloak_namespace }}"
+  register: plataforma_kc
+
+- name: Crear Keycloak + PostgreSQL (solo si no existe)
+  when: plataforma_kc.resources | length == 0
+  block:
+    - name: Exigir las contraseñas de la instancia (ansible-vault)
+      ansible.builtin.assert:
+        that:
+          - keycloak_db_password | default('') | length > 0
+          - keycloak_admin_password_inicial | default('') | length > 0
+        fail_msg: "Define keycloak_db_password y keycloak_admin_password_inicial (ansible-vault) para crear Keycloak."
+        quiet: true
+
+    - name: Esperar el CSV del operador RHBK antes de crear la instancia
+      ansible.builtin.include_tasks: esperar_csv.yml
+      vars:
+        csv_namespace: "{{ keycloak_namespace }}"
+        csv_prefijo: rhbk-operator
+
+    - name: Crear los recursos ausentes sin adoptar ni sobrescribir los existentes
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: asegurar_recurso
+      vars:
+        recurso_definicion: "{{ recurso_keycloak }}"
+        recurso_sensible: true
+      loop: "{{ lookup('ansible.builtin.template', 'keycloak-instancia.yaml.j2') | from_yaml_all | list }}"
+      loop_control:
+        loop_var: recurso_keycloak
+        label: "{{ recurso_keycloak.kind }}/{{ recurso_keycloak.metadata.name }}"
+      no_log: true

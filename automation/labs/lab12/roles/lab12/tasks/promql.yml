@@ -1,0 +1,39 @@
+---
+# Una consulta PromQL instantánea contra Thanos Querier, repetida hasta que
+# devuelva series (las métricas llegan cada 30 s y rate necesita dos muestras).
+#   vars: promql_nombre, promql_consulta, promql_minimo (opcional: exige que
+#         alguna serie supere ese valor)  ->  deja lab12_promql (resultado)
+- name: "PromQL · {{ promql_nombre }}"
+  block:
+    - name: "Consultar · {{ promql_nombre }}"
+      ansible.builtin.uri:
+        url: "{{ wk_thanos_url }}/api/v1/query"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          query: "{{ promql_consulta }}"
+        headers:
+          Authorization: "Bearer {{ wk_thanos_token }}"
+        validate_certs: false
+        status_code: 200
+      register: lab12_promql
+      until:
+        - lab12_promql.json.data.result | default([]) | length > 0
+        - promql_minimo is not defined or
+          (lab12_promql.json.data.result | map(attribute='value') | map('last') | map('float') | max) > promql_minimo | float
+      retries: 36
+      delay: 10
+      no_log: true
+  rescue:
+    - name: "Fallar · {{ promql_nombre }} sin series"
+      ansible.builtin.fail:
+        msg: >-
+          La consulta «{{ promql_nombre }}» no devolvió series{{ (' por encima de ' ~ promql_minimo) if promql_minimo is defined else '' }} en 6 minutos: {{ promql_consulta }}.
+          Revisa el PodMonitor de {{ wk_ns_gateway }} y que haya tráfico en {{ wk_ns_app }}.
+
+- name: Validar el contenido de la respuesta PromQL
+  ansible.builtin.import_tasks: promql_contract.yml
+
+- name: "Mostrar · {{ promql_nombre }}"
+  ansible.builtin.debug:
+    msg: "{{ lab12_promql.json.data.result | map(attribute='metric') | list }}"

@@ -1,0 +1,86 @@
+# Lab 11 · pasos 2, 4 y 12 (estado final): Gateway propio para socios con dos
+# listeners (b2b = mTLS, socios = filtros por IP), PROXY protocol en el ELB y
+# en Envoy (las dos anotaciones van juntas) y la CA montada por parametersRef.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ lab11_gateway }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  gatewayClassName: {{ gateway_class }}
+  infrastructure:
+    annotations:
+{% if aws_gateway_subnets_override | default(false) and aws_load_balancer_subnet_ids | default([]) | length > 0 %}
+      service.beta.kubernetes.io/aws-load-balancer-subnets: "{{ aws_load_balancer_subnet_ids | join(',') }}"
+{% endif %}
+      service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"
+      proxy.istio.io/config: '{"gatewayTopology":{"proxyProtocol":{}}}'
+    parametersRef:
+      group: ""
+      kind: ConfigMap
+      name: {{ lab11_gateway }}-infra
+  listeners:
+    - name: https
+      hostname: {{ lab11_b2b_host }}
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-tenant: {{ lab_id }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ lab11_gateway }}-tls
+    - name: socios
+      hostname: {{ lab11_soc_host }}
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-tenant: {{ lab_id }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ lab11_gateway }}-socios-tls
+---
+apiVersion: kuadrant.io/v1
+kind: TLSPolicy
+metadata:
+  name: b2b-tls-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ lab11_gateway }}
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: {{ tls_issuer_name }}
+---
+apiVersion: kuadrant.io/v1
+kind: DNSPolicy
+metadata:
+  name: b2b-dns-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ lab11_gateway }}
+  providerRefs:
+    - name: {{ dns_provider_secret }}

@@ -1,0 +1,203 @@
+---
+# Lab 11 · Seguridad B2B y red (lab11-seguridad-b2b.adoc).
+# Estado final del lab: Gateway B2B con PROXY protocol y la CA montada,
+# EnvoyFilter mTLS en b2b-…, AuthPolicy x509 (solo ACME Pagos) y en socios-…
+# la AuthPolicy IP + JWT con la IP del ejecutor. Sin override de Gateway ni
+# AuthorizationPolicy (el lab los aplica y los retira).
+
+- name: Exigir balanceador y Keycloak
+  ansible.builtin.assert:
+    that:
+      - entrada_modo == 'loadbalancer'
+      - dns_policy_habilitada | bool
+      - wk_keycloak_issuer | length > 0
+    fail_msg: >-
+      El Lab 11 necesita entrada_modo=loadbalancer con DNSPolicy (PROXY protocol en el ELB) y Keycloak.
+      En on-premise ver la sección «En on-premise» del lab (no automatizada).
+    quiet: true
+
+- name: Calcular nombres e IP pública
+  ansible.builtin.import_tasks: hechos.yml
+
+- name: Comprobar si el Gateway B2B ya existe
+  kubernetes.core.k8s_info:
+    api_version: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: "{{ lab11_gateway }}"
+    namespace: "{{ wk_ns_gateway }}"
+  register: lab11_gw_previo
+
+- name: Leer la cuota de balanceadores del namespace del Gateway
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ResourceQuota
+    namespace: "{{ wk_ns_gateway }}"
+  register: lab11_cuotas
+
+- name: Exigir sitio para un segundo Service LoadBalancer
+  ansible.builtin.assert:
+    that: lab11_gw_previo.resources | length > 0 or lab11_lb_max | min | default(99) >= lab11_min_loadbalancers | int
+    fail_msg: >-
+      La ResourceQuota de {{ wk_ns_gateway }} solo admite {{ lab11_lb_max }} Services LoadBalancer y el Gateway
+      B2B necesita el segundo. Ejecuta el rol tenant (su cuota por defecto admite {{ lab11_min_loadbalancers }})
+      o pasa tenant_cuota con services.loadbalancers >= {{ lab11_min_loadbalancers }}.
+    quiet: true
+  vars:
+    lab11_lb_max: >-
+      {{ lab11_cuotas.resources | map(attribute='spec.hard') | map('dict2items') | flatten
+         | selectattr('key', 'equalto', 'services.loadbalancers') | map(attribute='value') | map('int') | list }}
+
+- name: Crear la CA de socios y los certificados de cliente (cert-manager)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: pki.yaml.j2
+
+- name: Esperar a la CA y a los certificados de los socios
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: Certificate
+    espera_nombre: "{{ item }}-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Ready
+  loop: [b2b-ca, socio-acme, socio-otro]
+
+- name: Leer el Secret de la CA de socios
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: "b2b-ca-{{ lab_id }}"
+    namespace: "{{ wk_ns_gateway }}"
+  register: lab11_ca_secret
+  no_log: true
+
+- name: Publicar la CA en un ConfigMap y el ConfigMap de infraestructura del Gateway
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: ca-configmaps.yaml.j2
+  vars:
+    lab11_ca_pem: "{{ lab11_ca_secret.resources[0].data['ca.crt'] | b64decode }}"
+
+- name: Etiquetar el Secret de la CA para que Authorino lo cargue (capa 2)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "b2b-ca-{{ lab_id }}"
+        namespace: "{{ wk_ns_gateway }}"
+        labels:
+          authorino.kuadrant.io/managed-by: authorino
+          app.kubernetes.io/name: "b2b-ca-{{ lab_id }}"
+  no_log: true
+
+- name: Crear el Gateway B2B con PROXY protocol, TLSPolicy y DNSPolicy
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: gateway.yaml.j2
+
+- name: Esperar a que el balanceador dé dirección al Gateway B2B (Programmed)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: gateway.networking.k8s.io/v1
+    espera_kind: Gateway
+    espera_nombre: "{{ lab11_gateway }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Programmed
+    espera_reintentos: 72
+
+- name: Desplegar el backend eco y las dos rutas
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: backend.yaml.j2
+
+- name: Esperar a que b2b-api esté disponible
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apps/v1
+    espera_kind: Deployment
+    espera_nombre: b2b-api
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Available
+
+- name: Esperar a las dos rutas en el Gateway B2B
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_ruta
+  vars:
+    ruta_nombre: "{{ item }}-{{ lab_id }}"
+    ruta_gateway: "{{ lab11_gateway }}"
+  loop: [socios-route, b2b-route]
+
+- name: Exigir el certificado de cliente en b2b-… (EnvoyFilter)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: envoyfilter.yaml.j2
+
+- name: Autorizar por certificado (x509) y por IP + JWT
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: "{{ item }}"
+  loop:
+    - b2b-auth.yaml.j2
+    - socios-auth.yaml.j2
+  vars:
+    lab11_socios_modo: jwt
+    lab11_socios_predicado: 'source.address.split(":")[0] == "{{ wk_lab11_ip }}"'
+
+- name: Esperar a TLSPolicy, DNSPolicy y AuthPolicies Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: "{{ item.k }}"
+    espera_nombre: "{{ item.n }}"
+    espera_namespace: "{{ item.ns }}"
+    espera_condicion: Enforced
+  loop:
+    - {k: TLSPolicy, n: "b2b-tls-{{ lab_id }}", ns: "{{ wk_ns_gateway }}"}
+    - {k: DNSPolicy, n: "b2b-dns-{{ lab_id }}", ns: "{{ wk_ns_gateway }}"}
+    - {k: AuthPolicy, n: "b2b-auth-{{ lab_id }}", ns: "{{ wk_ns_app }}"}
+    - {k: AuthPolicy, n: "socios-auth-{{ lab_id }}", ns: "{{ wk_ns_app }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Dejar en local los certificados de cliente y la CA falsa
+  ansible.builtin.import_tasks: certs_locales.yml
+
+- name: Esperar a que resuelvan los dos hostnames
+  ansible.builtin.import_tasks: esperar_dns.yml
+
+- name: Validar el Lab 11
+  ansible.builtin.import_tasks: validar.yml
+  when: lab11_validar | bool
+  tags: [validar]

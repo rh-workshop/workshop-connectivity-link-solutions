@@ -1,0 +1,7 @@
+---
+# Por defecto el rol instala lo que falte; group_vars lo pone en true para el
+# clúster compartido (solo verificación).
+plataforma_verificar_solo: false
+# Instancia Keycloak + PostgreSQL in-cluster si no existe el CR Keycloak.
+# Exige keycloak_db_password y keycloak_admin_password_inicial (ansible-vault).
+plataforma_keycloak_instancia: true

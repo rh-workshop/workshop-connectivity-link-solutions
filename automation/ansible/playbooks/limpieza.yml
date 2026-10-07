@@ -1,0 +1,124 @@
+---
+# Limpieza de un participante, por lab o total (orden inverso al de creación).
+#   ansible-playbook playbooks/limpieza.yml -e lab_id=auto                        # todo lo de auto
+#   ansible-playbook playbooks/limpieza.yml -e lab_id=auto --tags limpieza_lab04b # solo el Lab 4B
+# Etiquetas: limpieza_lab12 … limpieza_lab05, limpieza_bonus_tokens, limpieza_lab04b, limpieza_lab04a, limpieza_lab03, limpieza_keycloak,
+#            limpieza_tenant (limpieza_lab01/02 no borran nada: son de lectura).
+# Los lab_id de limpieza_lab_ids_protegidos NUNCA se borran (p. ej. el entorno
+# de referencia admin), salvo -e limpieza_forzar=true.
+- name: Limpieza · participante
+  hosts: localhost
+  gather_facts: false
+  vars:
+    limpieza_lab_ids_protegidos: [admin]
+    limpieza_forzar: false
+  pre_tasks:
+    - name: Proteger los participantes de referencia
+      ansible.builtin.assert:
+        that: limpieza_forzar | bool or lab_id not in limpieza_lab_ids_protegidos
+        fail_msg: "lab_id={{ lab_id }} está protegido; no se limpia (usa -e limpieza_forzar=true si de verdad quieres)."
+        quiet: true
+      tags: [always]
+  roles:
+    - role: comun
+      tags: [always]
+  tasks:
+    - name: Limpiar el Lab 12 (PrometheusRule y restos diag-*)
+      ansible.builtin.import_role:
+        name: lab12
+        tasks_from: limpiar
+      tags: [limpieza_lab12]
+
+    - name: Limpiar el Lab 11 (DNSPolicy antes que el Gateway B2B; libera su ELB)
+      ansible.builtin.import_role:
+        name: lab11
+        tasks_from: limpiar
+      tags: [limpieza_lab11]
+
+    - name: Limpiar el Lab 10 (techo del Gateway primero)
+      ansible.builtin.import_role:
+        name: lab10
+        tasks_from: limpiar
+      tags: [limpieza_lab10]
+
+    - name: Limpiar el Lab 9
+      ansible.builtin.import_role:
+        name: lab09
+        tasks_from: limpiar
+      tags: [limpieza_lab09]
+
+    - name: Limpiar el Lab 8
+      ansible.builtin.import_role:
+        name: lab08
+        tasks_from: limpiar
+      tags: [limpieza_lab08]
+
+    - name: Limpiar el Bonus (TokenRateLimitPolicy, ruta /v1 y mock-LLM)
+      ansible.builtin.import_role:
+        name: bonus_tokens
+        tasks_from: limpiar
+      tags: [limpieza_bonus_tokens]
+
+    - name: Limpiar el Lab 7 (DNSPolicy antes que el Gateway de la nube)
+      ansible.builtin.import_role:
+        name: lab07
+        tasks_from: limpiar
+      tags: [limpieza_lab07]
+
+    - name: Limpiar el Lab 6 (Application, repo Git efímero y label managed-by)
+      ansible.builtin.import_role:
+        name: lab06
+        tasks_from: limpiar
+      tags: [limpieza_lab06]
+
+    - name: Limpiar el Lab 5 (Telemetry y etiquetas de la HTTPRoute)
+      ansible.builtin.import_role:
+        name: lab05
+        tasks_from: limpiar
+      tags: [limpieza_lab05]
+
+    - name: Limpiar el Lab 4B
+      ansible.builtin.import_role:
+        name: lab04b
+        tasks_from: limpiar
+      tags: [limpieza_lab04b]
+
+    - name: Limpiar el Lab 4A
+      ansible.builtin.import_role:
+        name: lab04a
+        tasks_from: limpiar
+      tags: [limpieza_lab04a]
+
+    - name: Limpiar el Lab 3 (DNSPolicy antes que el Gateway)
+      ansible.builtin.import_role:
+        name: lab03
+        tasks_from: limpiar
+      tags: [limpieza_lab03]
+
+    - name: Limpiar el Lab 2
+      ansible.builtin.import_role:
+        name: lab02
+        tasks_from: limpiar
+      tags: [limpieza_lab02]
+
+    - name: Limpiar el Lab 1
+      ansible.builtin.import_role:
+        name: lab01
+        tasks_from: limpiar
+      tags: [limpieza_lab01]
+
+    - name: Borrar el realm de Keycloak
+      ansible.builtin.import_role:
+        name: keycloak_realm
+        tasks_from: limpiar
+      tags: [limpieza_keycloak]
+
+    - name: Borrar el slice del participante (namespaces y RBAC)
+      ansible.builtin.import_role:
+        name: tenant
+        tasks_from: limpiar
+      tags: [limpieza_tenant]
+
+    - name: Comprobar que no queda nada del participante
+      ansible.builtin.import_tasks: tareas/verificar_limpieza.yml
+      tags: [limpieza_tenant]

@@ -1,0 +1,19 @@
+---
+- name: Esperar Subscription y su CSV instalado para cada operador
+  ansible.builtin.include_tasks: operador.yml
+  loop: "{{ plataforma_operadores + platform_gate_observability_defaults.lab05_operadores }}"
+  loop_control:
+    loop_var: gate_operator
+    label: "{{ gate_operator.namespace }}/{{ gate_operator.nombre }}"
+
+- name: Comprobar CRDs Established después de CSV Succeeded
+  ansible.builtin.include_tasks: esperar.yml
+  loop: "{{ platform_gate_crds }}"
+  loop_control:
+    loop_var: gate_crd
+  vars:
+    gate_resource:
+      api_version: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: "{{ gate_crd }}"
+      condition: Established

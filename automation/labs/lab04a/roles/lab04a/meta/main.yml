@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab04a
+  author: workshop-connectivity-link
+  description: Lab 4A · bank-api, HTTPRoute, JWT de Keycloak y RateLimitPolicy.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

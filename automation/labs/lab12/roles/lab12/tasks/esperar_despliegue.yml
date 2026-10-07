@@ -1,0 +1,23 @@
+---
+# Espera a que un Deployment termine su rollout con N réplicas listas (0 vale).
+#   vars: dep_nombre, dep_replicas, dep_ns (por defecto kuadrant-system),
+#         dep_arg (opcional: texto que deben contener los args del contenedor)
+- name: "Esperar a {{ dep_nombre }} con {{ dep_replicas }} réplicas listas"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ dep_nombre }}"
+    namespace: "{{ dep_ns | default('kuadrant-system') }}"
+  register: lab12_dep
+  vars:
+    lab12_d: "{{ lab12_dep.resources | default([{}]) | first }}"
+  until:
+    - lab12_d.spec is defined
+    - lab12_d.spec.replicas | int == dep_replicas | int
+    - lab12_d.status.observedGeneration | default(0) == lab12_d.metadata.generation
+    - lab12_d.status.updatedReplicas | default(0) | int == dep_replicas | int
+    - lab12_d.status.readyReplicas | default(0) | int == dep_replicas | int
+    - lab12_d.status.replicas | default(0) | int == dep_replicas | int
+    - dep_arg is not defined or (lab12_d.spec.template.spec.containers[0].args | default([]) | join(' ')) is search(dep_arg)
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"

@@ -1,0 +1,17 @@
+---
+# «Limpia la práctica» del Bonus, en orden inverso.
+- name: Borrar la TokenRateLimitPolicy, la ruta de IA y el mock-LLM
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_app }}"
+    wait: true
+  loop:
+    - {v: kuadrant.io/v1alpha1, k: TokenRateLimitPolicy, n: "mock-llm-tokens-{{ lab_id }}"}
+    - {v: gateway.networking.k8s.io/v1, k: HTTPRoute, n: "llm-route-{{ lab_id }}"}
+    - {v: apps/v1, k: Deployment, n: mock-llm}
+    - {v: v1, k: Service, n: mock-llm}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"

@@ -1,0 +1,60 @@
+# Lab 4B (https://rh-workshop.github.io/workshop-connectivity-link/lab4-api-key.html): política de ruta que
+# SUSTITUYE los defaults JWT del Gateway en esta HTTPRoute (Inherited Policy).
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: api-route-auth-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: api-route-{{ lab_id }}
+  rules:
+    authentication:
+      "api-key-users":
+        apiKey:
+          selector:
+            matchLabels:
+              workshop.user: {{ lab_id }}
+              kuadrant.io/auth-secret: "true"
+          # El AuthConfig vive en kuadrant-system; sin esto Authorino no
+          # encontraría el Secret, que está en el namespace del participante.
+          allNamespaces: true
+        credentials:
+          customHeader:
+            name: X-API-Key
+    authorization:
+      "require-admin-role-on-admin-path":
+        when:
+          - predicate: request.path.startsWith("/admin")
+        patternMatching:
+          patterns:
+            - selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/role
+              operator: eq
+              value: admin
+    response:
+      success:
+        filters:
+          "identity":
+            json:
+              properties:
+                "user_id":
+                  selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/user-id
+        headers:
+          "x-auth-identity":
+            plain:
+              selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/user-id
+          "x-auth-role":
+            plain:
+              selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/role
+      unauthenticated:
+        code: 401
+        message:
+          value: "API Key requerida en header X-API-Key"
+      unauthorized:
+        code: 403
+        message:
+          value: "Acceso denegado: /admin requiere el rol admin (tu credencial tiene rol customer)"

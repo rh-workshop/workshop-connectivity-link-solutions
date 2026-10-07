@@ -1,0 +1,36 @@
+# AuthPolicy del Gateway con defaults JWT (Keycloak/RHBK): se hereda en todas
+# las HTTPRoutes adjuntas salvo que declaren una propia (04-auth-policy-jwt.yaml.tpl).
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: gw-default-auth-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+    workshop.module: connectivity-link-keycloak
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ wk_gateway }}
+  defaults:
+    rules:
+      authentication:
+        "keycloak-jwt":
+          jwt:
+            issuerUrl: {{ wk_keycloak_issuer }}
+          credentials:
+            authorizationHeader:
+              prefix: Bearer
+      response:
+        success:
+          filters:
+            "identity":
+              json:
+                properties:
+                  "user_id":
+                    selector: auth.identity.sub
+        unauthenticated:
+          code: 401
+          message:
+            value: "Token JWT requerido (emisor: {{ wk_realm }})"

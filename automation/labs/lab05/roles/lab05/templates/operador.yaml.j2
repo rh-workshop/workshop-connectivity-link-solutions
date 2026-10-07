@@ -1,0 +1,32 @@
+# Operador {{ lab05_operador.nombre }} del Lab 5 (lab5.adoc, procedimiento del
+# instructor). Solo se aplica si el namespace no tiene ya una Subscription a él.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ lab05_operador.namespace }}
+{% if lab05_og_crear %}
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ lab05_operador.namespace }}
+  namespace: {{ lab05_operador.namespace }}
+spec:
+{% if lab05_operador.og_all_namespaces %}
+  {}
+{% else %}
+  targetNamespaces:
+    - {{ lab05_operador.namespace }}
+{% endif %}
+{% endif %}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ lab05_operador.nombre }}
+  namespace: {{ lab05_operador.namespace }}
+spec:
+  channel: {{ lab05_operador.canal }}
+  name: {{ lab05_operador.nombre }}
+  source: {{ lab05_operador.fuente }}
+  sourceNamespace: openshift-marketplace

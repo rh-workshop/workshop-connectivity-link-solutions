@@ -1,0 +1,33 @@
+---
+- name: Leer contadores de cada pod por el proxy del API sin credenciales en argumentos
+  ansible.builtin.command:
+    argv:
+      - oc
+      - get
+      - --raw
+      - "/api/v1/namespaces/kuadrant-system/pods/{{ item.metadata.name }}:8080/proxy/server-metrics"
+  loop: "{{ lab12_ha_pods.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  register: lab12_ha_scrape
+  changed_when: false
+
+- name: Exigir el esquema del contador de enforcement
+  ansible.builtin.assert:
+    that:
+      - >-
+        item.stdout | regex_findall('(?m)^auth_server_authconfig_total(?:\{[^\n]*\})? ') | length == 0 or
+        '# TYPE auth_server_authconfig_total counter' in item.stdout
+    quiet: true
+  loop: "{{ lab12_ha_scrape.results }}"
+  loop_control:
+    label: "{{ item.item.metadata.name }}"
+
+- name: Conservar contadores de enforcement por identidad de pod
+  ansible.builtin.set_fact:
+    lab12_ha_metrics: >-
+      {{ lab12_ha_metrics | default({}) | combine({item.item.metadata.uid:
+      (item.stdout | regex_findall('(?m)^auth_server_authconfig_total(?:\{[^\n]*\})? ([0-9.eE+-]+)$') | map('float') | sum)}) }}
+  loop: "{{ lab12_ha_scrape.results }}"
+  loop_control:
+    label: "{{ item.item.metadata.name }}"

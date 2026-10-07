@@ -1,0 +1,20 @@
+---
+- name: Esperar generación observada, Deployment Available y sufijo correcto
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ console_plugin_deployment }}"
+    namespace: "{{ console_plugin_namespace }}"
+  register: console_plugin_final
+  until: >-
+    console_plugin_final.resources | length == 1 and
+    console_plugin_final.resources[0].status.observedGeneration | default(-1)
+       == console_plugin_final.resources[0].metadata.generation and
+    (console_plugin_final.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available') | selectattr('status', 'equalto', 'True') | list | length > 0) and
+    (console_plugin_final.resources[0].spec.template.spec.containers
+      | selectattr('name', 'equalto', console_plugin_contenedor) | map(attribute='env', default=[]) | flatten
+      | selectattr('name', 'equalto', 'METRICS_WORKLOAD_SUFFIX')
+      | selectattr('value', 'defined') | selectattr('value', 'equalto', console_plugin_sufijo) | list | length == 1)
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"

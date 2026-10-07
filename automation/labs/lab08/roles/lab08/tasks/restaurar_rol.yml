@@ -1,0 +1,30 @@
+---
+- name: Validar propiedad de la asignación antes de retirarla
+  ansible.builtin.import_tasks: marcador_rol.yml
+
+- name: Retirar solo el rol temporal registrado y su marcador
+  when: lab08_marcador_rol.resources | length > 0
+  block:
+    - name: Verificar la identidad actual antes de retirar la asignación registrada
+      ansible.builtin.import_tasks: consultar_roles_alice.yml
+
+    - name: Impedir retirar roles a una cuenta alice recreada con otro UUID
+      ansible.builtin.assert:
+        that: lab08_alice_lectura.json[0].id == lab08_marcador_rol.resources[0].data.user_id
+        fail_msg: El UUID actual de alice difiere del marcador; no se retiran roles.
+        quiet: true
+      no_log: true
+
+    - name: Retirar inventario de alice sin alterar otros roles
+      ansible.builtin.include_tasks: rol_alice.yml
+      vars:
+        lab08_rol_estado: absent
+
+    - name: Borrar el marcador solo después de retirar el rol
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: ConfigMap
+        name: lab08-alice-inventario-owner
+        namespace: "{{ wk_ns_app }}"
+        wait: true

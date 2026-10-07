@@ -1,0 +1,94 @@
+---
+# Pasos 4 y 5 del Lab 6. Con un repo externo sin push (solo lectura) no se
+# puede versionar nada: se comprueba únicamente el self-heal.
+- name: Fijar si este recorrido puede hacer commits
+  ansible.builtin.set_fact:
+    lab06_exercise_evidence: {}
+    lab06_con_commits: "{{ lab06_git_modo == 'local' or lab06_git_push | bool }}"
+    lab06_limite_git: "{{ lab06_limite_cambio if (lab06_git_modo == 'local' or lab06_git_push | bool) else lab06_limite_repo | default(lab06_limite_base) }}"
+
+# Paso 4 · Cambiar un límite por GitOps: commit 5 → 20.
+- name: Subir la cuota por commit
+  when: lab06_con_commits | bool
+  block:
+    - name: Versionar la RateLimitPolicy con el límite nuevo
+      ansible.builtin.include_tasks: "git_{{ lab06_git_modo }}.yml"
+      vars:
+        lab06_git_op: publicar
+        lab06_limite: "{{ lab06_limite_cambio }}"
+        lab06_git_mensaje: "feat: subir rate limit de {{ lab_id }} a {{ lab06_limite_cambio }} req/min"
+
+    - name: Esperar a que Argo CD aplique el commit
+      ansible.builtin.include_tasks: esperar_sync.yml
+      vars:
+        lab06_limite_esperado: "{{ lab06_limite_cambio }}"
+        lab06_commit_esperado: "{{ lab06_git.commit }}"
+
+    - name: Registrar evidencia del commit aplicado en esta ejecución
+      ansible.builtin.set_fact:
+        lab06_exercise_evidence: "{{ lab06_exercise_evidence | default({}) | combine({'change_commit': lab06_git.commit}) }}"
+
+# Self-heal: un cambio manual en el clúster no sobrevive.
+- name: Simular un cambio manual (drift) en el clúster
+  kubernetes.core.k8s:
+    state: patched
+    api_version: kuadrant.io/v1
+    kind: RateLimitPolicy
+    name: "api-route-rl-{{ lab_id }}"
+    namespace: "{{ wk_ns_app }}"
+    merge_type: merge
+    definition:
+      spec:
+        limits:
+          per-user-per-minute:
+            rates:
+              - limit: "{{ lab06_limite_drift | int }}"
+                window: 60s
+
+- name: Esperar a que el self-heal restaure el valor de Git
+  block:
+    - name: Consultar el límite tras el cambio manual
+      kubernetes.core.k8s_info:
+        api_version: kuadrant.io/v1
+        kind: RateLimitPolicy
+        name: "api-route-rl-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+      register: lab06_heal
+      until: >-
+        (lab06_heal.resources[0].spec.limits['per-user-per-minute'].rates[0].limit | string)
+        == (lab06_limite_git | string)
+      retries: 24
+      delay: 5
+  rescue:
+    - name: Fallar si Argo CD no deshace el cambio manual
+      ansible.builtin.fail:
+        msg: >-
+          Tras fijar limit={{ lab06_limite_drift }} a mano, Argo CD no restauró limit={{ lab06_limite_git }} en 2 min.
+          Revisa syncPolicy.automated.selfHeal del Application {{ lab06_application }}.
+
+- name: Informar del self-heal
+  ansible.builtin.debug:
+    msg: "Self-heal OK: limit={{ lab06_limite_drift }} a mano → {{ lab06_limite_git }} (valor de Git) en {{ (lab06_heal.attempts | default(1)) * 5 }} s o menos."
+
+- name: Registrar evidencia de self-heal comprobado en esta ejecución
+  ansible.builtin.set_fact:
+    lab06_exercise_evidence: "{{ lab06_exercise_evidence | default({}) | combine({'self_heal': true}) }}"
+
+# Paso 5 · Rollback con git revert: vuelve a 5 sin tocar el clúster.
+- name: Revertir el cambio de cuota en Git
+  when: lab06_con_commits | bool
+  block:
+    - name: Revertir el último commit (git revert)
+      ansible.builtin.include_tasks: "git_{{ lab06_git_modo }}.yml"
+      vars:
+        lab06_git_op: revertir
+
+    - name: Esperar a que Argo CD aplique el revert
+      ansible.builtin.include_tasks: esperar_sync.yml
+      vars:
+        lab06_limite_esperado: "{{ lab06_limite_base }}"
+        lab06_commit_esperado: "{{ lab06_git.commit }}"
+
+    - name: Registrar evidencia del revert aplicado en esta ejecución
+      ansible.builtin.set_fact:
+        lab06_exercise_evidence: "{{ lab06_exercise_evidence | default({}) | combine({'revert_commit': lab06_git.commit}) }}"

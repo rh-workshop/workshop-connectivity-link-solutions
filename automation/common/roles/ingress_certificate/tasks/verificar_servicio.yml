@@ -1,0 +1,66 @@
+---
+- name: Esperar a que IngressController observe el cambio solicitado
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: IngressController
+    name: default
+    namespace: openshift-ingress-operator
+  register: ingress_tls_controller_final
+  until: >-
+    ingress_tls_controller_final.resources | length == 1 and
+    ingress_tls_controller_final.resources[0].status.observedGeneration | default(-1)
+    == ingress_tls_controller_final.resources[0].metadata.generation
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"
+
+- name: Comprobar la referencia activa del certificado validado
+  ansible.builtin.assert:
+    that: ingress_tls_controller_final.resources[0].spec.defaultCertificate.name | default('') == ingress_certificate_secret
+    quiet: true
+  when: ingress_certificate_mode != 'rollback'
+
+- name: Esperar recuperación de Ingress, autenticación y consola
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+    name: "{{ operador_tls }}"
+  register: ingress_tls_operador
+  until: >-
+    ingress_tls_operador.resources | length == 1 and
+    (ingress_tls_operador.resources[0].status.conditions | selectattr('type', 'equalto', 'Available')
+     | selectattr('status', 'equalto', 'True') | list | length == 1) and
+    (ingress_tls_operador.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded')
+     | selectattr('status', 'equalto', 'False') | list | length == 1) and
+    (ingress_tls_operador.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing')
+     | selectattr('status', 'equalto', 'False') | list | length == 1)
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"
+  loop: [ingress, authentication, console]
+  loop_control:
+    loop_var: operador_tls
+
+- name: Leer la URL real de la consola
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: ingress_tls_console
+
+- name: Comprobar HTTPS servido con proxies del entorno y confianza combinada
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ role_path }}/files/ingress_tls.py"
+      - served
+      - --expected-fingerprint
+      - "{{ ingress_tls_evidence.sha256 if ingress_certificate_mode != 'rollback' and ingress_certificate_verificar_fingerprint | bool else '' }}"
+      - --bundle
+      - "{{ ingress_certificate_trust_bundle }}"
+    stdin: >-
+      {{ ([ingress_tls_console.resources[0].status.consoleURL]
+          + (['https://' ~ wk_keycloak_host] if wk_keycloak_host | default('') | length > 0 else [])) | to_json }}
+  changed_when: false
+  register: ingress_tls_served
+  until: ingress_tls_served.rc == 0
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"

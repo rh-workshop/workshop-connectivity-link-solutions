@@ -1,0 +1,8 @@
+# Copia fuera del repositorio y ajusta después de verificar la cuenta con STS.
+expected_account_id = "000000000000"
+region              = "us-east-2"
+cluster_vpc_name    = "workshop-vpc"
+# Para infraestructura NUEVA; conserva name del estado existente al migrar.
+name = "cl-lab08-user1"
+# Tu IP pública para probar la API directamente, en formato CIDR.
+extra_allowed_cidrs = ["203.0.113.10/32"]

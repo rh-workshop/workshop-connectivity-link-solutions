@@ -1,0 +1,82 @@
+---
+# Precondición externa: Console no forma parte del desired state de plataforma.
+- name: Exigir identidad conocida y modo explícito del plugin de consola
+  ansible.builtin.assert:
+    that:
+      - console_plugin_namespace == 'kuadrant-system'
+      - console_plugin_deployment == 'kuadrant-console-plugin'
+      - console_plugin_verificar_solo | string | lower in ['true', 'false']
+    quiet: true
+
+- name: Leer el ConsolePlugin generado por el operador
+  kubernetes.core.k8s_info:
+    api_version: console.openshift.io/v1
+    kind: ConsolePlugin
+    name: "{{ console_plugin_deployment }}"
+  register: console_plugin_registration
+
+- name: Leer el backend del plugin sin modificarlo
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ console_plugin_deployment }}"
+    namespace: "{{ console_plugin_namespace }}"
+  register: console_plugin_backend
+
+- name: Comprobar propietario del backend antes de habilitar la consola
+  ansible.builtin.import_tasks: validar_propiedad.yml
+  vars:
+    console_plugin_actual: "{{ console_plugin_backend }}"
+
+- name: Exigir registro correcto y backend Available con generación observada
+  ansible.builtin.assert:
+    that:
+      - console_plugin_registration.resources | length == 1
+      - console_plugin_registration.resources[0].spec.backend.type == 'Service'
+      - console_plugin_registration.resources[0].spec.backend.service.name == console_plugin_deployment
+      - console_plugin_registration.resources[0].spec.backend.service.namespace == console_plugin_namespace
+      - console_plugin_backend.resources | length == 1
+      - console_plugin_backend.resources[0].status.observedGeneration | default(-1) == console_plugin_backend.resources[0].metadata.generation
+      - console_plugin_backend.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | selectattr('status', 'equalto', 'True') | list | length == 1
+    quiet: true
+
+- name: Leer habilitación global de la consola sin escribir
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: console_plugin_console
+
+- name: Exigir una consola existente y no duplicar el plugin
+  ansible.builtin.assert:
+    that:
+      - console_plugin_console.resources | length == 1
+      - console_plugin_console.resources[0].spec.plugins | default([]) | type_debug == 'list'
+      - console_plugin_console.resources[0].spec.plugins | default([]) | select('equalto', console_plugin_deployment) | list | length <= 1
+    quiet: true
+
+- name: Verificar que la consola carga el plugin
+  ansible.builtin.assert:
+    that: console_plugin_deployment in (console_plugin_console.resources[0].spec.plugins | default([]))
+    fail_msg: >-
+      Falta habilitar el plugin en Console.spec.plugins. El instructor debe autorizar
+      console_plugin_verificar_solo=false; un Deployment Ready no acredita habilitación.
+    quiet: true
+  when: console_plugin_verificar_solo | bool
+
+- name: Habilitar sólo el plugin ausente con autorización del instructor
+  ansible.builtin.include_tasks: habilitacion_patch.yml
+  when:
+    - not console_plugin_verificar_solo | bool
+    - console_plugin_deployment not in (console_plugin_console.resources[0].spec.plugins | default([]))
+
+- name: Confirmar la habilitación efectiva de la consola
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: console_plugin_enabled
+  failed_when: >-
+    console_plugin_enabled.resources | length != 1 or
+    console_plugin_enabled.resources[0].spec.plugins | default([])
+      | select('equalto', console_plugin_deployment) | list | length != 1

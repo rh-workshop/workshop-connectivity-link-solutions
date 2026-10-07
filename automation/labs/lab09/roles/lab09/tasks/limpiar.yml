@@ -1,0 +1,26 @@
+---
+- name: Borrar políticas y ruta de la API migrada
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_app }}"
+    wait: true
+  loop:
+    - {v: kuadrant.io/v1, k: RateLimitPolicy, n: "bank-3scale-rl-{{ lab_id }}"}
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "bank-3scale-auth-{{ lab_id }}"}
+    - {v: gateway.networking.k8s.io/v1, k: HTTPRoute, n: "bank-3scale-route-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar los Secrets de las Applications
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: Secret
+    name: "{{ item.app }}-{{ lab_id }}"
+    namespace: "{{ wk_ns_app }}"
+  loop: "{{ lab09_apps }}"
+  loop_control:
+    label: "{{ item.app }}"

@@ -1,0 +1,65 @@
+---
+- name: Validar la propiedad antes de activar demostraciones globales
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: "{{ lab12_demos | bool }}"
+
+# Lab 12 · Operación y resiliencia (lab12-operacion.adoc).
+# Estado final POR PARTICIPANTE: la PrometheusRule CuotaAgotada en su namespace
+# de Gateway (y el RoleBinding monitoring-rules-edit). Las demostraciones de
+# kuadrant-system y el diagnóstico diag-* van detrás de sus variables.
+
+- name: Fijar la URL del inventario (ruta del Lab 8 con cuota de 3/min)
+  ansible.builtin.set_fact:
+    wk_inv_url: "https://{{ wk_lab_host }}/inventario/items"
+
+- name: Enlazar monitoring-rules-edit en el namespace del Gateway
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: rolebinding.yaml.j2
+  when: tenant_rbac_usuario | default(true) | bool
+
+- name: Crear la alerta CuotaAgotada
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: prometheusrule.yaml.j2
+
+- name: Esperar al PodMonitor de Istio del namespace del Gateway (lo crea Kuadrant)
+  block:
+    - name: Consultar el PodMonitor istio-pod-monitor
+      kubernetes.core.k8s_info:
+        api_version: monitoring.coreos.com/v1
+        kind: PodMonitor
+        name: istio-pod-monitor
+        namespace: "{{ wk_ns_gateway }}"
+      register: lab12_podmonitor
+      until: lab12_podmonitor.resources | length > 0
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Explicar de dónde sale el PodMonitor
+      ansible.builtin.fail:
+        msg: >-
+          No hay PodMonitor istio-pod-monitor en {{ wk_ns_gateway }}: lo crea el operador de Kuadrant cuando el CR
+          Kuadrant tiene spec.observability.enable=true (instructor, Lab 5). Sin él no hay métricas ni alerta.
+
+- name: Validar el Lab 12
+  ansible.builtin.import_tasks: validar.yml
+  when: lab12_validar | bool
+  tags: [validar]
+
+- name: Diagnóstico de políticas que no se aplican (diag-*)
+  ansible.builtin.include_tasks: diagnostico.yml
+  when: lab12_diagnostico | bool
+
+- name: Demostraciones de resiliencia en kuadrant-system (afectan a TODOS los participantes)
+  ansible.builtin.include_tasks: demos.yml
+  when: lab12_demos | bool

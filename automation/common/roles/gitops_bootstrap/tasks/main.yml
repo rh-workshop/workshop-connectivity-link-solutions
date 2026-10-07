@@ -1,0 +1,6 @@
+---
+- name: Verificar o instalar el operador compartido mediante su contrato canónico
+  ansible.builtin.import_tasks: operador.yml
+
+- name: Esperar a la instancia Argo CD disponible
+  ansible.builtin.include_tasks: esperar_argocd.yml

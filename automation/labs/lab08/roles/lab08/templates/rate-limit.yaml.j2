@@ -1,0 +1,21 @@
+# Lab 8 · paso 6: cuota propia del inventario, contada por auth.identity.user_id
+# (el atributo que exporta la AuthPolicy; con auth.identity.sub no limitaría nada).
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: inventario-rl-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: inventario-route-{{ lab_id }}
+  limits:
+    "inventario-por-usuario":
+      rates:
+        - limit: {{ lab08_cuota }}
+          window: 60s
+      counters:
+        - expression: auth.identity.user_id

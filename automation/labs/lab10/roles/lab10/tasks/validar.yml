@@ -1,0 +1,179 @@
+---
+# «Comprueba el resultado» del Lab 10, en el orden del lab:
+#   tokens M2M · autorización por operación · techo overrides (y retirada) ·
+#   canary 90/10 · x-api-version: v2 · Deprecation/Sunset/Link solo en v1.
+- name: Fijar la URL de la API de gobierno
+  ansible.builtin.set_fact:
+    wk_gob_url: "https://{{ wk_lab_host }}/gobierno/v1/saldo"
+
+- name: Obtener los tokens client_credentials
+  ansible.builtin.include_tasks: tokens_m2m.yml
+
+- name: Comprobar los claims de los dos tokens M2M
+  ansible.builtin.assert:
+    that:
+      - lab10_c1.azp == 'bank-m2m'
+      - lab10_c1.preferred_username == 'service-account-bank-m2m'
+      - "'bank:read' in lab10_c1.scope.split(' ')"
+      - "'bank:write' not in lab10_c1.scope.split(' ')"
+      - "'bank:write' in lab10_c2.scope.split(' ')"
+    fail_msg: "Scopes inesperados: sin pedir → '{{ lab10_c1.scope }}'; con bank:write → '{{ lab10_c2.scope }}'"
+    success_msg: "Token M2M: '{{ lab10_c1.scope }}'; con scope=bank:write: '{{ lab10_c2.scope }}'"
+  vars:
+    lab10_c1: "{{ (lab10_token_m2m.split('.')[1] | replace('-', '+') | replace('_', '/') ~ '==') | b64decode | from_json }}"
+    lab10_c2: "{{ (lab10_token_m2m_w.split('.')[1] | replace('-', '+') | replace('_', '/') ~ '==') | b64decode | from_json }}"
+
+- name: Sin token
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 10 · gobierno sin token"
+    http_url: "{{ wk_gob_url }}"
+    http_esperado: 401
+
+- name: Autorización por operación (GET/POST × bank:read/bank:write)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 10 · {{ item.prueba }}"
+    http_url: "{{ wk_gob_url }}"
+    http_metodo: "{{ item.metodo }}"
+    http_esperado: "{{ item.esperado }}"
+    lab10_contrato_metodo: "{{ item.metodo }}"
+    http_json_contract: "{{ lab10_http_contract if item.esperado == 200 else [] }}"
+    http_no_log: true
+    http_cabeceras:
+      Authorization: "Bearer {{ item.token }}"
+  loop:
+    - {prueba: "GET con bank:read", metodo: GET, esperado: 200, token: "{{ lab10_token_m2m }}"}
+    - {prueba: "POST con bank:read", metodo: POST, esperado: 403, token: "{{ lab10_token_m2m }}"}
+    - {prueba: "POST con bank:write", metodo: POST, esperado: 200, token: "{{ lab10_token_m2m_w }}"}
+  loop_control:
+    label: "{{ item.prueba }} → {{ item.esperado }}"
+  no_log: true
+
+- name: Pedir el token de alice (sin scopes de la API)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: alice
+
+- name: Alice tiene un token válido pero sin bank:read
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 10 · GET de alice (sin scope)"
+    http_url: "{{ wk_gob_url }}"
+    http_esperado: 403
+    http_no_log: true
+    http_cabeceras:
+      Authorization: "Bearer {{ wk_token }}"
+
+- name: Techo del Gateway (overrides) y su retirada
+  ansible.builtin.import_tasks: techo.yml
+
+- name: Renovar los tokens M2M (caducan a los 5 minutos)
+  ansible.builtin.include_tasks: tokens_m2m.yml
+
+- name: Canary · muestra de peticiones sin cabecera
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_serie
+  vars:
+    serie_prueba: "Lab 10 · reparto {{ lab10_peso_v1 }}/{{ lab10_peso_v2 }}"
+    serie_url: "{{ wk_gob_url }}"
+    serie_n: "{{ lab10_canary_muestra }}"
+    serie_contenido: true
+    serie_cabeceras:
+      Authorization: "Bearer {{ lab10_token_m2m }}"
+
+- name: Validar el JSON publicado de cada respuesta del canary
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_http_contrato
+  vars:
+    comun_http: "{{ lab10_respuesta }}"
+    http_json_contract: "{{ lab10_http_contract }}"
+    http_no_log: true
+  loop: "{{ comun_serie.results }}"
+  loop_control:
+    loop_var: lab10_respuesta
+    label: JSON del canary
+
+- name: Contar el reparto y las cabeceras de retirada por versión
+  ansible.builtin.set_fact:
+    lab10_v1: "{{ comun_serie.results | selectattr('status', 'equalto', 200) | selectattr('json.version', 'equalto', 'v1') | list }}"
+    lab10_v2: "{{ comun_serie.results | selectattr('status', 'equalto', 200) | selectattr('json.version', 'equalto', 'v2') | list }}"
+  no_log: true
+
+- name: Comprobar el 90/10 (con tolerancia) y Deprecation/Sunset/Link solo en v1
+  ansible.builtin.assert:
+    that:
+      - wk_serie_codigos | unique == [200]
+      - (lab10_v1 | length) + (lab10_v2 | length) == lab10_canary_muestra | int
+      - lab10_pct_v2 | float >= lab10_canary_min_pct | float
+      - lab10_pct_v2 | float <= lab10_canary_max_pct | float
+      - lab10_v1 | selectattr('deprecation', 'defined') | selectattr('deprecation', 'equalto', 'true') | list | length == lab10_v1 | length
+      - lab10_v1 | selectattr('sunset', 'defined') | selectattr('sunset', 'equalto', lab10_sunset) | list | length == lab10_v1 | length
+      - lab10_v1 | selectattr('link', 'defined') | selectattr('link', 'search', 'successor-version') | list | length == lab10_v1 | length
+      - lab10_v2 | selectattr('deprecation', 'defined') | list | length == 0
+      - lab10_v2 | selectattr('sunset', 'defined') | list | length == 0
+      - lab10_v2 | selectattr('link', 'defined') | list | length == 0
+    fail_msg: >-
+      Canary: {{ lab10_v1 | length }} v1 / {{ lab10_v2 | length }} v2 ({{ lab10_pct_v2 }} % de v2, se admite
+      {{ lab10_canary_min_pct }}–{{ lab10_canary_max_pct }} %); códigos {{ wk_serie_codigos | unique }}.
+      Revisa pesos y que el ResponseHeaderModifier esté en el backendRef de v1.
+    success_msg: >-
+      Canary: {{ lab10_v1 | length }} v1 / {{ lab10_v2 | length }} v2 en {{ lab10_canary_muestra }} peticiones
+      ({{ lab10_pct_v2 }} % de v2); Deprecation/Sunset/Link en las {{ lab10_v1 | length }} de v1 y en ninguna de v2.
+  vars:
+    lab10_pct_v2: "{{ ((lab10_v2 | length) * 100 / (lab10_canary_muestra | int)) | round(1) }}"
+
+- name: Canary · x-api-version v2 fuerza la versión nueva
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_serie
+  vars:
+    serie_prueba: "Lab 10 · x-api-version: v2"
+    serie_url: "{{ wk_gob_url }}"
+    serie_n: 5
+    serie_contenido: true
+    serie_cabeceras:
+      Authorization: "Bearer {{ lab10_token_m2m }}"
+      x-api-version: v2
+
+- name: Validar el JSON publicado de las respuestas forzadas a v2
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_http_contrato
+  vars:
+    comun_http: "{{ lab10_respuesta }}"
+    http_json_contract: "{{ lab10_http_contract }}"
+    http_no_log: true
+  loop: "{{ comun_serie.results }}"
+  loop_control:
+    loop_var: lab10_respuesta
+    label: JSON de v2
+
+- name: Comprobar que con la cabecera siempre responde v2, con saldo y sin aviso de retirada
+  ansible.builtin.assert:
+    that:
+      - comun_serie.results | map(attribute='json.version') | unique | list == ['v2']
+      - comun_serie.results | selectattr('json.saldo', 'defined') | list | length == 5
+      - wk_serie_codigos | unique == [200]
+      - comun_serie.results | selectattr('deprecation', 'defined') | list | length == 0
+      - comun_serie.results | selectattr('sunset', 'defined') | list | length == 0
+      - comun_serie.results | selectattr('link', 'defined') | list | length == 0
+    fail_msg: "Con x-api-version: v2 se esperaban 5 respuestas de v2 sin Deprecation."
+    success_msg: "x-api-version: v2 → 5/5 a v2 (campo saldo), sin Deprecation ni Sunset."
+
+- name: Resumen del Lab 10
+  ansible.builtin.debug:
+    msg: >-
+      Lab 10 OK · {{ wk_gob_url }} · M2M con scopes · GET read 200 / POST read 403 / POST write 200 / alice 403 ·
+      techo overrides (Overridden → 429 en gobierno y bank-api) y retirada (Enforced) · canary
+      {{ lab10_v1 | length }}/{{ lab10_v2 | length }} · Deprecation/Sunset solo en v1

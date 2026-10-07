@@ -1,0 +1,60 @@
+---
+# Una ronda de tráfico (10 peticiones, con 429) y una consulta de la fracción
+# de 429 por backend con espera acotada. Se repite hasta que algún backend
+# tenga fracción > 0: con un Gateway recién creado, la serie de 429 nace en un
+# raspado con el contador ya en su valor final y rate() necesita un incremento
+# en un raspado posterior. El when va dentro (ver carga_alerta.yml).
+- name: "Ronda {{ lab12_ronda + 1 }} de tráfico hasta ver 429 en las métricas"
+  when: not (lab12_429_ok | default(false) | bool)
+  block:
+    - name: "Ronda {{ lab12_ronda + 1 }} · renovar el token (caduca a los 5 minutos)"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: "{{ 'bob' if lab12_carga_ruta == 'inventario' else 'alice' }}"
+
+    - name: "Ronda {{ lab12_ronda + 1 }} · 10 peticiones"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_serie
+      vars:
+        serie_prueba: "Lab 12 · tráfico ronda {{ lab12_ronda + 1 }} ({{ lab12_carga_ruta }})"
+        serie_url: "{{ wk_inv_url if lab12_carga_ruta == 'inventario' else wk_api_url }}"
+        serie_n: 10
+        serie_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+
+    - name: "Ronda {{ lab12_ronda + 1 }} · fracción de 429 por backend"
+      ansible.builtin.uri:
+        url: "{{ wk_thanos_url }}/api/v1/query"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          query: >-
+            sum by (destination_service_name) (rate(istio_requests_total{destination_service_namespace="{{ wk_ns_app }}", response_code="429"}[5m]))
+            / (sum by (destination_service_name) (rate(istio_requests_total{destination_service_namespace="{{ wk_ns_app }}"}[5m])) > 0)
+        headers:
+          Authorization: "Bearer {{ wk_thanos_token }}"
+        validate_certs: false
+        status_code: 200
+      register: lab12_promql
+      until: lab12_promql.json.data.result | default([]) | selectattr('metric.destination_service_name', 'equalto', lab12_backend) | map(attribute='value') | map('last') | map('float') | max | default(0) > 0
+      retries: 3
+      delay: 10
+      failed_when: false
+      no_log: true
+
+    - name: Validar el vector y el rango de la fracción de 429
+      ansible.builtin.import_tasks: promql_contract.yml
+      vars:
+        promql_fraccion: true
+        promql_allow_empty: true
+
+    - name: "Ronda {{ lab12_ronda + 1 }} · anotar el resultado"
+      ansible.builtin.set_fact:
+        lab12_429_ok: "{{ lab12_promql.json.data.result | default([]) | selectattr('metric.destination_service_name', 'equalto', lab12_backend) | map(attribute='value') | map('last') | map('float') | max | default(0) > 0 }}"
+        # Hecho aparte: en las rondas saltadas, register sobrescribiría lab12_promql.
+        lab12_429_series: >-
+          {{ lab12_promql.json.data.result | default([]) | selectattr('metric.destination_service_name', 'equalto', lab12_backend) | map(attribute='metric.destination_service_name')
+             | zip(lab12_promql.json.data.result | default([]) | selectattr('metric.destination_service_name', 'equalto', lab12_backend) | map(attribute='value') | map('last')) | list }}

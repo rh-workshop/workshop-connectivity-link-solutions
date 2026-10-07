@@ -1,0 +1,9 @@
+---
+- name: ACME · bootstrap de credenciales y emisor DNS-01 compartido
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: acme_issuer
+      tags: [acme_issuer]

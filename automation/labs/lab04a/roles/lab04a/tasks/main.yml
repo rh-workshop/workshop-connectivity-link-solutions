@@ -1,0 +1,134 @@
+---
+# Lab 4A · Publicar bank-api y autenticar con Keycloak/JWT (lab4.adoc).
+
+- name: Retirar la AuthPolicy de ruta del Lab 4B si quedó (la ruta hereda el JWT)
+  kubernetes.core.k8s:
+    state: absent
+    api_version: kuadrant.io/v1
+    kind: AuthPolicy
+    name: "api-route-auth-{{ lab_id }}"
+    namespace: "{{ wk_ns_app }}"
+
+- name: Desplegar el backend bank-api
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: bank-api.yaml.j2
+
+- name: Esperar a que bank-api esté disponible
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apps/v1
+    espera_kind: Deployment
+    espera_nombre: bank-api
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Available
+
+- name: Publicar la HTTPRoute
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: httproute.yaml.j2
+
+- name: Esperar a que el Gateway acepte la HTTPRoute (Accepted y ResolvedRefs)
+  block:
+    - name: Consultar el estado de la HTTPRoute en su Gateway
+      kubernetes.core.k8s_info:
+        api_version: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        name: "api-route-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+      register: lab04a_ruta
+      vars:
+        lab04a_conds: >-
+          {{ lab04a_ruta.resources[0].status.parents | default([])
+             | selectattr('parentRef.name', 'equalto', wk_gateway)
+             | map(attribute='conditions') | flatten
+             | selectattr('status', 'equalto', 'True') | map(attribute='type') | list
+             if lab04a_ruta.resources | default([]) | length > 0 else [] }}
+      until: "'Accepted' in lab04a_conds and 'ResolvedRefs' in lab04a_conds"
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Fallar con el estado de la HTTPRoute
+      ansible.builtin.fail:
+        msg: >-
+          La HTTPRoute api-route-{{ lab_id }} no quedó Accepted/ResolvedRefs en {{ wk_gateway }}:
+          {{ lab04a_ruta.resources[0].status.parents | default('sin estado') | to_json }}
+
+- name: Esperar al DNSRecord que la DNSPolicy crea al adjuntar la ruta
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1alpha1
+    espera_kind: DNSRecord
+    espera_nombre: "{{ wk_gateway }}-https"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Ready
+  when:
+    - entrada_modo == 'loadbalancer'
+    - dns_policy_habilitada | bool
+
+- name: Esperar a que la AuthPolicy JWT del Gateway vigile la ruta (Enforced)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: AuthPolicy
+    espera_nombre: "gw-default-auth-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Enforced
+
+- name: Limitar a cinco peticiones por minuto
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: rate-limit-policy.yaml.j2
+
+- name: Esperar a la RateLimitPolicy Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: RateLimitPolicy
+    espera_nombre: "api-route-rl-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Enforced
+
+- name: Leer la zona en la que la DNSPolicy publicó el registro
+  kubernetes.core.k8s_info:
+    api_version: kuadrant.io/v1alpha1
+    kind: DNSRecord
+    name: "{{ wk_gateway }}-https"
+    namespace: "{{ wk_ns_gateway }}"
+  register: lab04a_dnsrecord
+  when:
+    - entrada_modo == 'loadbalancer'
+    - dns_policy_habilitada | bool
+
+- name: Esperar a que el hostname de la API resuelva
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_dns
+  vars:
+    dns_nombre: "{{ wk_lab_host }}"
+    dns_zona: "{{ lab04a_dnsrecord.resources[0].status.zoneDomainName | default(omit) }}"
+  when:
+    - entrada_modo == 'loadbalancer'
+    - dns_policy_habilitada | bool
+
+- name: Validar el Lab 4A
+  ansible.builtin.import_tasks: validar.yml
+  when: lab04a_validar | bool
+  tags: [validar]

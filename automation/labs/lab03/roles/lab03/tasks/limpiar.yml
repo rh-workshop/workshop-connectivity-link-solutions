@@ -1,0 +1,67 @@
+---
+# Orden obligatorio: DNSPolicy primero (el DNS Operator borra el registro de la
+# zona mientras el Gateway aún existe), luego el resto y el Gateway al final
+# (su Service LoadBalancer libera el balanceador cloud).
+- name: Borrar la DNSPolicy del participante
+  kubernetes.core.k8s:
+    state: absent
+    api_version: kuadrant.io/v1
+    kind: DNSPolicy
+    name: "dns-policy-{{ lab_id }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+    wait_timeout: 300
+
+- name: Esperar a que el DNS Operator retire los DNSRecord de la zona
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_borrado
+  vars:
+    borrado_api_version: kuadrant.io/v1alpha1
+    borrado_kind: DNSRecord
+    borrado_namespace: "{{ wk_ns_gateway }}"
+    # El DNSRecord se llama <gateway>-<listener> y lo posee la DNSPolicy.
+    borrado_nombre: "{{ wk_gateway }}-https"
+
+- name: Borrar AuthPolicy, TLSPolicy y Route del Gateway
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+  loop:
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "gw-default-auth-{{ lab_id }}"}
+    - {v: kuadrant.io/v1, k: TLSPolicy, n: "tls-policy-{{ lab_id }}"}
+    - {v: route.openshift.io/v1, k: Route, n: "{{ wk_gateway }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar el Gateway
+  kubernetes.core.k8s:
+    state: absent
+    api_version: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: "{{ wk_gateway }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+    wait_timeout: 300
+
+- name: Esperar a que desaparezca el Service LoadBalancer del Gateway
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_borrado
+  vars:
+    borrado_api_version: v1
+    borrado_kind: Service
+    borrado_namespace: "{{ wk_ns_gateway }}"
+    borrado_selector: "gateway.networking.k8s.io/gateway-name={{ wk_gateway }}"
+
+- name: Borrar el Secret TLS emitido para el listener
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: Secret
+    name: "{{ wk_gateway }}-tls"
+    namespace: "{{ wk_ns_gateway }}"

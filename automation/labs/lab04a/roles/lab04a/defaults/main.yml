@@ -1,0 +1,4 @@
+---
+lab04a_validar: true
+# Imagen del backend (la misma que fija https://rh-workshop.github.io/workshop-connectivity-link/lab4.html).
+lab04a_imagen: registry.access.redhat.com/ubi9/python-311@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c

@@ -1,0 +1,115 @@
+---
+# Lab 6 · GitOps con Argo CD (https://rh-workshop.github.io/workshop-connectivity-link/lab6.html): la RateLimitPolicy
+# del Lab 4A pasa a gestionarse desde Git; commit 5 → 20, self-heal de un cambio
+# manual y git revert a 5.
+
+- name: Verificar o preparar únicamente el acceso SSH de lectura al repositorio
+  ansible.builtin.import_tasks: repository_credentials.yml
+  when: lab06_repository_credentials_enabled | bool
+  tags: [lab06_repository_credentials]
+
+- name: Exigir la URL del repo en modo externo
+  ansible.builtin.assert:
+    that:
+      - lab06_git_modo in ['local', 'externo']
+      - lab06_git_modo == 'local' or lab06_git_repo_url | length > 0
+    fail_msg: "lab06_git_modo debe ser local o externo; en modo externo define lab06_git_repo_url (y lab06_git_revision/lab06_git_path)."
+    quiet: true
+
+- name: Instalar OpenShift GitOps si falta
+  ansible.builtin.import_tasks: plataforma.yml
+
+# Paso 1 · (Instructor) Argo CD gestiona el namespace del participante. Field
+# manager propio: la label es del Lab 6 y no roba campos al rol tenant.
+- name: Permitir que Argo CD gestione el namespace de la aplicación
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}-lab06"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ wk_ns_app }}"
+        labels:
+          argocd.argoproj.io/managed-by: "{{ lab06_argocd_namespace }}"
+
+- name: Esperar a los permisos que el operador GitOps crea en el namespace
+  block:
+    - name: Consultar el RoleBinding del application-controller de Argo CD
+      kubernetes.core.k8s_info:
+        api_version: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        name: "{{ lab06_argocd_instancia }}-argocd-application-controller"
+        namespace: "{{ wk_ns_app }}"
+      register: lab06_rb
+      until: lab06_rb.resources | length > 0
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Fallar si el operador GitOps no dio permisos
+      ansible.builtin.fail:
+        msg: >-
+          El operador GitOps no creó el RoleBinding {{ lab06_argocd_instancia }}-argocd-application-controller en
+          {{ wk_ns_app }} tras etiquetarlo con argocd.argoproj.io/managed-by={{ lab06_argocd_namespace }}.
+
+# Paso 2 · Versionar la RateLimitPolicy (límite base) en el repo.
+- name: Preparar el repo Git efímero en el clúster
+  ansible.builtin.include_tasks: repo_local.yml
+  when: lab06_git_modo == 'local'
+
+- name: Preparar el repo Git externo
+  ansible.builtin.include_tasks: repo_externo.yml
+  when: lab06_git_modo == 'externo'
+
+- name: Versionar la RateLimitPolicy con el límite base
+  ansible.builtin.include_tasks: "git_{{ lab06_git_modo }}.yml"
+  vars:
+    lab06_git_op: publicar
+    lab06_limite: "{{ lab06_limite_base }}"
+    lab06_git_mensaje: "feat: rate limit de {{ lab_id }} gestionado por GitOps"
+  when: lab06_git_modo == 'local' or lab06_git_push | bool
+
+# Paso 3 · (Instructor) El Application enlaza la carpeta con el namespace.
+- name: Crear el Application de Argo CD
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: application.yaml.j2
+
+- name: Permitir al participante consultar únicamente su Application
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}-lab06"
+    definition: "{{ item }}"
+  loop: "{{ lookup('ansible.builtin.template', 'application-view.yaml.j2') | from_yaml_all | select | list }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }} {{ item.metadata.namespace }}"
+  tags: [lab06_application_view]
+
+- name: Esperar a la sincronización con el límite base
+  ansible.builtin.include_tasks: esperar_sync.yml
+  vars:
+    lab06_limite_esperado: "{{ lab06_limite_repo | default(lab06_limite_base) }}"
+
+# Pasos 4 y 5 · Cambio por commit, self-heal y rollback con git revert.
+- name: Recorrer el ciclo GitOps del lab
+  ansible.builtin.include_tasks: ejercicio.yml
+  when: lab06_ejercicio | bool
+
+- name: Validar el Lab 6
+  ansible.builtin.import_tasks: validar.yml
+  when: lab06_validar | bool
+  tags: [validar]
+
+- name: Borrar la copia de trabajo local del repo externo
+  ansible.builtin.file:
+    path: "{{ lab06_git_dir.path }}"
+    state: absent
+  when: lab06_git_dir.path is defined
+  changed_when: false

@@ -1,0 +1,23 @@
+---
+# Lab 4B · API key, AuthPolicy de ruta, 403 por rol, cuota y restauración de JWT.
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm, lab03, lab04a.
+- name: Lab 4B · Autenticar una integración con API key
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]
+      lab03_validar: false
+    - role: lab04a
+      tags: [lab04a]
+      lab04a_validar: false
+    - role: lab04b
+      tags: [lab04b]

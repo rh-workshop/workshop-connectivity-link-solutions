@@ -1,0 +1,42 @@
+---
+# Vuelve spec.replicas y spec.storage del CR Limitador a su valor original
+# (normalmente ausentes: una réplica y contadores en memoria).
+- name: Leer el CR Limitador actual
+  kubernetes.core.k8s_info:
+    api_version: limitador.kuadrant.io/v1alpha1
+    kind: Limitador
+    name: limitador
+    namespace: kuadrant-system
+  register: lab12_limitador_actual
+
+- name: Calcular el parche de restauración de Limitador
+  ansible.builtin.set_fact:
+    lab12_parche_limitador: "{{ lab12_ops.replicas + lab12_ops.storage }}"
+  vars:
+    lab12_actual: "{{ lab12_limitador_actual.resources[0].spec }}"
+    lab12_ops:
+      replicas: >-
+        {{ ([{'op': 'add', 'path': '/spec/replicas', 'value': lab12_orig_limitador.replicas}]
+            if lab12_orig_limitador.replicas is defined and lab12_actual.replicas | default(none) != lab12_orig_limitador.replicas else [])
+           + ([{'op': 'remove', 'path': '/spec/replicas'}]
+            if lab12_orig_limitador.replicas is not defined and lab12_actual.replicas is defined else []) }}
+      storage: >-
+        {{ ([{'op': 'add', 'path': '/spec/storage', 'value': lab12_orig_limitador.storage}]
+            if lab12_orig_limitador.storage is defined and lab12_actual.storage | default(none) != lab12_orig_limitador.storage else [])
+           + ([{'op': 'remove', 'path': '/spec/storage'}]
+            if lab12_orig_limitador.storage is not defined and lab12_actual.storage is defined else []) }}
+
+- name: Restaurar spec.replicas y spec.storage de Limitador
+  kubernetes.core.k8s_json_patch:
+    api_version: limitador.kuadrant.io/v1alpha1
+    kind: Limitador
+    name: limitador
+    namespace: kuadrant-system
+    patch: "{{ lab12_parche_limitador }}"
+  when: lab12_parche_limitador | length > 0
+
+- name: Esperar a Limitador restaurado
+  ansible.builtin.include_tasks: esperar_despliegue.yml
+  vars:
+    dep_nombre: limitador-limitador
+    dep_replicas: "{{ lab12_orig_limitador.replicas | default(1) }}"

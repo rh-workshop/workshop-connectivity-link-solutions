@@ -1,0 +1,59 @@
+---
+- name: Comprobar propiedad antes de instalar operadores de plataforma
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: true
+
+# Instala un operador por OLM solo si su namespace no tiene ya una Subscription
+# a ese paquete (sea cual sea su nombre). Nunca modifica una existente.
+- name: "Buscar Subscriptions existentes en {{ operador.namespace }}"
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    namespace: "{{ operador.namespace }}"
+  register: plataforma_subs
+
+- name: "Buscar OperatorGroups en {{ operador.namespace }}"
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1
+    kind: OperatorGroup
+    namespace: "{{ operador.namespace }}"
+  register: plataforma_ogs
+
+# Desde cert-manager 1.15 Red Hat recomienda AllNamespaces.
+- name: Determinar el alcance esperado del operador
+  ansible.builtin.set_fact:
+    plataforma_operador_all_namespaces: >-
+      {{ operador.og_all_namespaces | bool or operador.nombre == 'openshift-cert-manager-operator' }}
+
+- name: Rechazar OperatorGroups ambiguos o de alcance incompatible
+  ansible.builtin.assert:
+    that:
+      - plataforma_ogs.resources | length <= 1
+      - >-
+        plataforma_ogs.resources | length == 0 or
+        ((plataforma_ogs.resources[0].spec.targetNamespaces | default([]) | length == 0)
+         and (plataforma_ogs.resources[0].spec.selector | default({}) | length == 0))
+        if plataforma_operador_all_namespaces | bool else
+        (plataforma_ogs.resources | length == 0 or
+         plataforma_ogs.resources[0].spec.targetNamespaces | default([]) == [operador.namespace])
+    fail_msg: >-
+      El OperatorGroup existente en {{ operador.namespace }} no coincide con el alcance solicitado.
+      No se cambia automáticamente: revisa su propiedad y el modo admitido por el CSV.
+    quiet: true
+
+- name: "Crear Namespace, OperatorGroup y Subscription de {{ operador.nombre }}"
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: asegurar_recurso
+  vars:
+    plataforma_og_crear: "{{ plataforma_ogs.resources | length == 0 }}"
+    recurso_definicion: "{{ recurso_operador }}"
+  loop: "{{ lookup('ansible.builtin.template', 'operador.yaml.j2') | from_yaml_all | list }}"
+  loop_control:
+    loop_var: recurso_operador
+    label: "{{ recurso_operador.kind }}/{{ recurso_operador.metadata.name }}"
+  when: >-
+    plataforma_subs.resources | selectattr('spec.name', 'equalto', operador.nombre) | list | length == 0

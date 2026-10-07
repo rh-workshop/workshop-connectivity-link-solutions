@@ -1,0 +1,26 @@
+---
+# Lab 7 · Publicar la API en la nube: segundo Gateway (ELB), DNSPolicy en la zona
+# pública y certificado ACME; valida HTTPS sin -k (validate_certs=true).
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm, lab03, lab04a
+#   (el backend bank-api del Lab 4A es el que se publica).
+#   Solo aplica con entrada_modo=loadbalancer; en on-prem (route) el rol se omite.
+- name: Lab 7 · Publicar la API en la nube
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]
+      lab03_validar: false
+    - role: lab04a
+      tags: [lab04a]
+      lab04a_validar: false
+    - role: lab07
+      tags: [lab07]

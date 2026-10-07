@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab05
+  author: workshop-connectivity-link
+  description: "Lab 5 · Observabilidad: métricas, trazas, access logs y dashboards del Gateway del participante."
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

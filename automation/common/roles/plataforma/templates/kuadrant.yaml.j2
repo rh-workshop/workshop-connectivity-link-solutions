@@ -1,0 +1,8 @@
+# CR raíz Kuadrant (07-kuadrant-cr.yaml): despliega Authorino, Limitador y DNS
+# Operator. Solo se crea si no existe (no se pisa observability ni developerPortal).
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+metadata:
+  name: kuadrant
+  namespace: kuadrant-system
+spec: {}

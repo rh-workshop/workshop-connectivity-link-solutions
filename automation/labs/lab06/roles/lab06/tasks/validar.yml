@@ -1,0 +1,79 @@
+---
+# «Comprueba el resultado» del Lab 6: Argo CD corriendo, Application
+# Synced/Healthy, la RateLimitPolicy gestionada por Argo CD con el valor de Git
+# (5 tras el revert) y la política Enforced.
+- name: Localizar el pod del repo efímero (validación suelta con --tags validar)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ wk_ns_app }}"
+    label_selectors:
+      - app=git-politicas
+    field_selectors:
+      - status.phase=Running
+  register: lab06_pod_git_v
+  when:
+    - lab06_git_modo == 'local'
+    - lab06_pod is not defined
+
+- name: Fijar el pod del repo efímero
+  ansible.builtin.set_fact:
+    lab06_pod: "{{ lab06_pod_git_v.resources[0].metadata.name }}"
+    lab06_repo_argocd: "http://git-politicas.{{ wk_ns_app }}.svc.cluster.local:8080/politicas.git"
+  when:
+    - lab06_git_modo == 'local'
+    - lab06_pod is not defined
+
+- name: Consultar los pods de Argo CD, el Application y la RateLimitPolicy
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n | default(omit) }}"
+    namespace: "{{ item.ns }}"
+  loop:
+    - {v: v1, k: Pod, ns: "{{ lab06_argocd_namespace }}"}
+    - {v: argoproj.io/v1alpha1, k: Application, n: "{{ lab06_application }}", ns: "{{ lab06_argocd_namespace }}"}
+    - {v: kuadrant.io/v1, k: RateLimitPolicy, n: "api-route-rl-{{ lab_id }}", ns: "{{ wk_ns_app }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n | default('*') }}"
+  register: lab06_estado
+
+- name: Comprobar el resultado del Lab 6
+  ansible.builtin.assert:
+    that:
+      - lab06_pods_argocd | length > 0
+      - lab06_pods_argocd | rejectattr('status.phase', 'equalto', 'Running') | list | length == 0
+      - lab06_v_app.status.sync.status == 'Synced'
+      - lab06_v_app.status.health.status == 'Healthy'
+      - lab06_v_rlp.metadata.annotations['argocd.argoproj.io/tracking-id'] | default('') is search('^' ~ lab06_application ~ ':')
+      - (lab06_v_rlp.spec.limits['per-user-per-minute'].rates[0].limit | string) == (lab06_limite_final | string)
+      - lab06_v_rlp.status.conditions | selectattr('type', 'equalto', 'Enforced') | selectattr('status', 'equalto', 'True') | list | length == 1
+    fail_msg: >-
+      Lab 6 incompleto: pods argocd={{ lab06_pods_argocd | map(attribute='status.phase') | list }},
+      sync={{ lab06_v_app.status.sync.status | default('?') }}, health={{ lab06_v_app.status.health.status | default('?') }},
+      tracking={{ lab06_v_rlp.metadata.annotations['argocd.argoproj.io/tracking-id'] | default('ninguno') }},
+      limit={{ lab06_v_rlp.spec.limits['per-user-per-minute'].rates[0].limit | default('?') }} (esperado {{ lab06_limite_final }}).
+    quiet: true
+  vars:
+    lab06_pods_argocd: >-
+      {{ lab06_estado.results[0].resources | selectattr('metadata.name', 'search', '^' ~ lab06_argocd_instancia ~ '-') | list }}
+    lab06_v_app: "{{ lab06_estado.results[1].resources[0] }}"
+    lab06_v_rlp: "{{ lab06_estado.results[2].resources[0] }}"
+    lab06_limite_final: "{{ lab06_limite_base if (lab06_git_modo == 'local' or lab06_git_push | bool) else lab06_limite_repo | default(lab06_limite_base) }}"
+
+- name: Comprobar el límite versionado en el repo efímero
+  kubernetes.core.k8s_exec:
+    namespace: "{{ wk_ns_app }}"
+    pod: "{{ lab06_pod }}"
+    command: bash /opt/wk/git-lab.sh limite
+  register: lab06_limite_en_git
+  changed_when: false
+  failed_when: lab06_limite_en_git.stdout | trim != lab06_limite_base | string
+  when: lab06_git_modo == 'local'
+
+- name: Resumen del Lab 6
+  ansible.builtin.debug:
+    msg:
+      - "Lab 6 OK · Application {{ lab06_application }} Synced/Healthy · repo {{ lab06_repo_argocd }} ({{ lab06_git_revision }}:{{ lab06_git_path }})"
+      - "{{ 'Commit y revert aplicados por SHA, self-heal comprobado en esta ejecución' if lab06_exercise_evidence | default({}) | length > 0 and (lab06_exercise_evidence | default({})).get('change_commit', '') and (lab06_exercise_evidence | default({})).get('revert_commit', '') and (lab06_exercise_evidence | default({})).get('self_heal', false) else ('Self-heal comprobado en esta ejecución; commit/revert no comprobados' if (lab06_exercise_evidence | default({})).get('self_heal', false) else 'Estado final comprobado; commit, self-heal y revert no comprobados en esta ejecución') }}"
+      - "RateLimitPolicy api-route-rl-{{ lab_id }} gestionada por Argo CD y Enforced"

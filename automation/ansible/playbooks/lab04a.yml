@@ -1,0 +1,20 @@
+---
+# Lab 4A · bank-api, HTTPRoute, JWT de Keycloak y cuota 5/min.
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm, lab03.
+- name: Lab 4A · Publicar la API y autenticar con Keycloak/JWT
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]
+      lab03_validar: false
+    - role: lab04a
+      tags: [lab04a]

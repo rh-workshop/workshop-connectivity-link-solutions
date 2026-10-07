@@ -1,0 +1,15 @@
+---
+- name: Borrar la PrometheusRule (el RoleBinding es del tenant)
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_gateway }}"
+  loop:
+    - {v: monitoring.coreos.com/v1, k: PrometheusRule, n: "api-429-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar los restos del diagnóstico si quedaron
+  ansible.builtin.include_tasks: diagnostico_limpiar.yml

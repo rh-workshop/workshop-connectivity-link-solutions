@@ -1,0 +1,17 @@
+# DNSPolicy: publica {{ wk_lab_host }} en la zona a partir de la dirección del Gateway.
+# providerRefs es una lista de LocalObjectReference: el Secret SIEMPRE vive en
+# el mismo namespace que la DNSPolicy ({{ wk_ns_gateway }}).
+apiVersion: kuadrant.io/v1
+kind: DNSPolicy
+metadata:
+  name: dns-policy-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ wk_gateway }}
+  providerRefs:
+    - name: {{ dns_provider_secret }}

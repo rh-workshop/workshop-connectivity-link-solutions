@@ -1,0 +1,22 @@
+# Lab 11 · paso 9: bloqueo corporativo en TODO el Gateway B2B. overrides con
+# strategy merge: añade la regla a cada ruta sin sustituir su autenticación.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: b2b-gw-ip-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ lab11_gateway }}
+  overrides:
+    strategy: merge
+    rules:
+      authorization:
+        "bloqueo-corporativo":
+          patternMatching:
+            patterns:
+              - predicate: {{ ('!(source.address.split(":")[0] in ["' ~ wk_lab11_ip ~ '"])') | to_json }}

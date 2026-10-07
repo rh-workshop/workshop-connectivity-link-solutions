@@ -1,0 +1,16 @@
+# Access log del Gateway {{ wk_gateway }} limitado a las respuestas de error
+# (lab5.adoc, paso 6). El formato JSON lo fija el instructor en el meshConfig
+# del CR Istio; este recurso solo decide QUÉ peticiones se registran.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: {{ lab05_telemetry_nombre }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  accessLogging:
+    - providers:
+        - name: envoy
+      filter:
+        expression: "{{ lab05_telemetry_filtro }}"

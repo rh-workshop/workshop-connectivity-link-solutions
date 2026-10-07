@@ -1,0 +1,32 @@
+---
+- name: Consultar la GatewayClass del taller (oc get gatewayclass)
+  kubernetes.core.k8s_info:
+    api_version: gateway.networking.k8s.io/v1
+    kind: GatewayClass
+    name: "{{ gateway_class }}"
+  register: lab02_gc
+
+- name: Comprobar el controlador de la GatewayClass
+  ansible.builtin.assert:
+    that:
+      - lab02_gc.resources | length == 1
+      - lab02_gc.resources[0].spec.controllerName == gateway_class_controlador[gateway_class]
+    fail_msg: >-
+      La GatewayClass {{ gateway_class }} no existe o su controlador no es
+      {{ gateway_class_controlador[gateway_class] }}.
+    quiet: true
+
+- name: Comprobar que la GatewayClass está aceptada
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: gateway.networking.k8s.io/v1
+    espera_kind: GatewayClass
+    espera_nombre: "{{ gateway_class }}"
+    espera_condicion: Accepted
+    espera_reintentos: 6
+
+- name: Resumen del Lab 2
+  ansible.builtin.debug:
+    msg: "GatewayClass {{ gateway_class }} · controlador {{ lab02_gc.resources[0].spec.controllerName }} · Accepted=True"

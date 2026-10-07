@@ -1,0 +1,117 @@
+---
+# Calcula una sola vez los hechos del participante que usan todos los roles.
+# Equivale al bloque «Variables de tu sesión» de los labs.
+
+- name: Cargar la identidad única de Argo CD de plataforma
+  ansible.builtin.set_fact:
+    wk_platform_argocd: "{{ lookup('ansible.builtin.file', role_path ~ '/../../platform-argocd.yml') | from_yaml }}"
+
+- name: Validar la identidad compartida sin permitir nombres alternativos
+  ansible.builtin.assert:
+    that:
+      - wk_platform_argocd is mapping
+      - wk_platform_argocd.keys() | sort == ['name', 'namespace', 'repo_server_container', 'repo_server_label', 'service_account']
+      - wk_platform_argocd.values() | select('match', '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') | list | length == 5
+    quiet: true
+
+- name: Validar el gestor declarado de la plataforma
+  ansible.builtin.import_tasks: validar_gestor.yml
+
+- name: Validar la selección opcional de subnets AWS
+  ansible.builtin.assert:
+    that:
+      - aws_load_balancer_subnet_ids | default([]) | type_debug == 'list'
+      - aws_load_balancer_subnet_ids | default([]) | select('string') | list | length == aws_load_balancer_subnet_ids | default([]) | length
+      - aws_load_balancer_subnet_ids | default([]) | select('match', '^subnet-[0-9a-f]+$') | list | length == aws_load_balancer_subnet_ids | default([]) | length
+      - aws_load_balancer_subnet_ids | default([]) | unique | list | length == aws_load_balancer_subnet_ids | default([]) | length
+    fail_msg: aws_load_balancer_subnet_ids debe ser una lista de IDs subnet-hex válidos y únicos.
+    quiet: true
+  no_log: true
+
+- name: Comprobar que lab_id es un nombre DNS válido
+  ansible.builtin.assert:
+    that:
+      - lab_id is string
+      - lab_id is match('^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$')
+    fail_msg: "lab_id='{{ lab_id }}' no es válido: minúsculas, dígitos y guiones (máx. 32)."
+    quiet: true
+
+# Resolver el destino con el mismo cliente: respeta contextos, kubeconfig
+# fusionado y K8S_AUTH_HOST. La salida puede contener credenciales: no_log.
+- name: Leer la conexión efectiva del cliente Kubernetes
+  kubernetes.core.k8s_cluster_info:
+  register: comun_conexion
+  no_log: true
+  when: openshift_api_esperada | default('') | length > 0
+
+- name: Comprobar que el cliente apunta a la API esperada
+  ansible.builtin.assert:
+    that: >-
+      comun_conexion.connection.host | regex_replace('/+$', '')
+      == openshift_api_esperada | regex_replace('/+$', '')
+    fail_msg: La API efectiva no coincide con openshift_api_esperada; se cancela antes de escribir.
+    quiet: true
+  when: openshift_api_esperada | default('') | length > 0
+
+- name: Comprobar la sesión contra la API de OpenShift
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Ingress
+    name: cluster
+  register: comun_ingress
+  failed_when: comun_ingress.resources | default([]) | length == 0
+
+- name: Comprobar la identidad del destino antes de cualquier escritura
+  ansible.builtin.import_tasks: verificar_destino.yml
+
+- name: Localizar el CR Keycloak para autodetectar su hostname
+  kubernetes.core.k8s_info:
+    api_version: k8s.keycloak.org/v2beta1
+    kind: Keycloak
+    name: "{{ keycloak_cr_nombre }}"
+    namespace: "{{ keycloak_namespace }}"
+  register: comun_keycloak_cr
+  failed_when: false
+  when: keycloak_host | default('') | length == 0
+
+- name: Calcular dominio, zona y hostname del Keycloak
+  ansible.builtin.set_fact:
+    wk_ocp_domain: "{{ ocp_domain if ocp_domain | length > 0 else comun_ingress.resources[0].spec.domain }}"
+    wk_keycloak_host: >-
+      {{ keycloak_host if keycloak_host | default('') | length > 0
+         else (comun_keycloak_cr.resources | default([]) | map(attribute='spec.hostname.hostname') | first | default(''))
+              | regex_replace('^https?://', '') | regex_replace('/.*$', '') }}
+
+- name: Calcular los nombres del participante
+  ansible.builtin.set_fact:
+    wk_zona: "{{ workshop_zone if workshop_zone | length > 0 else wk_ocp_domain }}"
+    wk_ns_gateway: "gateway-{{ lab_id }}"
+    wk_ns_app: "atp-{{ lab_id }}"
+    wk_gateway: "connectivity-link-gw-{{ lab_id }}"
+    wk_realm: "realm-{{ lab_id | regex_replace('^user', '') }}"
+    wk_labels:
+      workshop.module: connectivity-link
+      workshop.user: "{{ lab_id }}"
+
+- name: Calcular hostname de la API, URL e issuer de Keycloak
+  ansible.builtin.set_fact:
+    wk_lab_host: "api-{{ lab_id }}.{{ wk_zona }}"
+    wk_api_url: "https://api-{{ lab_id }}.{{ wk_zona }}/api/v1/party"
+    wk_keycloak_url: "{{ ('https://' ~ wk_keycloak_host) if wk_keycloak_host | length > 0 else '' }}"
+    wk_keycloak_issuer: "{{ ('https://' ~ wk_keycloak_host ~ '/realms/' ~ wk_realm) if wk_keycloak_host | length > 0 else '' }}"
+
+- name: Comprobar que la Route passthrough es viable (host bajo *.apps)
+  ansible.builtin.assert:
+    that: wk_zona == wk_ocp_domain
+    fail_msg: >-
+      entrada_modo=route exige que la zona sea el dominio *.apps ({{ wk_ocp_domain }});
+      deja workshop_zone vacío o usa entrada_modo=loadbalancer.
+    quiet: true
+  when: entrada_modo == 'route'
+
+- name: Mostrar el contexto del participante
+  ansible.builtin.debug:
+    msg:
+      - "LAB_ID={{ lab_id }}  ·  namespaces {{ wk_ns_gateway }} / {{ wk_ns_app }}"
+      - "Hostname {{ wk_lab_host }}  ·  entrada {{ entrada_modo }}  ·  GatewayClass {{ gateway_class }}"
+      - "Issuer {{ wk_keycloak_issuer | default('(sin Keycloak)', true) }}"

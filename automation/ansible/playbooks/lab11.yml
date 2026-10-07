@@ -1,0 +1,26 @@
+---
+# Lab 11 · Gateway B2B: PROXY protocol, filtros por IP y mTLS con la CA de socios.
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm, lab03, lab04a.
+#   Crea un SEGUNDO Service LoadBalancer (ELB) en gateway-<lab_id>: la cuota del
+#   tenant (automation/common/roles/tenant/defaults) admite 2. Limpieza: tag limpieza_lab11.
+#   IP de la allowlist: se detecta sola; o -e lab11_mi_ip=<IPv4 pública>.
+- name: Lab 11 · Seguridad B2B y red
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]
+      lab03_validar: false
+    - role: lab04a
+      tags: [lab04a]
+      lab04a_validar: false
+    - role: lab11
+      tags: [lab11]

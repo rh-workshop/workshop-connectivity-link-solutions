@@ -1,0 +1,16 @@
+# Entorno y credenciales locales
+.env
+.env.local
+
+# OpenTofu / Terraform: proveedores, estado y valores reales fuera de Git
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+!**/*.tfvars.example
+**/tfplan
+
+# Caché de Python y sistema
+__pycache__/
+*.pyc
+.DS_Store

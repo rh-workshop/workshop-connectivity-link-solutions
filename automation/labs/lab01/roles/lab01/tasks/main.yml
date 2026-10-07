@@ -1,0 +1,5 @@
+---
+# Lab 1 es de inspección: no crea nada. El «laboratorio» es la propia validación.
+- name: Inspeccionar el control plane de Connectivity Link
+  ansible.builtin.import_tasks: validar.yml
+  tags: [validar]

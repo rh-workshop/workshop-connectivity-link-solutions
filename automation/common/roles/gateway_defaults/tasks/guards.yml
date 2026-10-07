@@ -1,0 +1,54 @@
+---
+- name: Exigir clase y versión Istio compatibles y root namespace real
+  ansible.builtin.assert:
+    that:
+      - gateway_class == 'istio'
+      - aws_load_balancer_subnet_ids | default([]) | length > 0
+      - gateway_defaults_istio.resources | length == 1
+      - gateway_defaults_istio.resources[0].spec.version | default('') in gateway_defaults_supported_versions
+      - gateway_defaults_istio.resources[0].spec.namespace == gateway_defaults_namespace
+      - gateway_defaults_istio.resources[0].spec.get('values', {}).get('meshConfig', {}).get('rootNamespace', gateway_defaults_namespace) == gateway_defaults_namespace
+      - gateway_defaults_istio.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+    fail_msg: Se requiere Istio Ready compatible, root namespace coincidente y selección AWS explícita.
+    quiet: true
+
+- name: Rechazar Gateways Istio fuera de namespaces propios del taller
+  ansible.builtin.assert:
+    that:
+      - (item.metadata.labels | default({})).get('workshop.user', '') | length > 0
+      - gateway_defaults_namespaces.resources | selectattr('metadata.name', 'equalto', item.metadata.namespace) | list | length == 1
+      - (gateway_defaults_namespaces.resources | selectattr('metadata.name', 'equalto', item.metadata.namespace) | first).metadata.labels.get('workshop.module', '') == 'connectivity-link'
+      - (gateway_defaults_namespaces.resources | selectattr('metadata.name', 'equalto', item.metadata.namespace) | first).metadata.labels.get('workshop.user', '') == item.metadata.labels.get('workshop.user', '')
+    fail_msg: El default de clase afecta a un Gateway ajeno; se cancela sin escribir.
+    quiet: true
+  loop: "{{ gateway_defaults_gateways.resources | selectattr('spec.gatewayClassName', 'equalto', 'istio') | list }}"
+
+- name: Rechazar defaults duplicados o de otra identidad
+  ansible.builtin.assert:
+    that:
+      - gateway_defaults_labeled.resources | length <= 1
+      - gateway_defaults_labeled.resources | length == 0 or gateway_defaults_labeled.resources[0].metadata.name == gateway_defaults_name
+    fail_msg: Existe otro ConfigMap de defaults para Istio; no se adopta ni se sobrescribe.
+    quiet: true
+
+- name: Rechazar ConfigMaps ajenos, gestionados por operadores o GitOps
+  ansible.builtin.assert:
+    that:
+      - (item.metadata.labels | default({})).get('workshop.module', '') == 'connectivity-link'
+      - (item.metadata.labels | default({})).get('workshop.user', '') == 'platform'
+      - (item.metadata.labels | default({})).get('gateway.istio.io/defaults-for-class', '') == 'istio'
+      - item.metadata.ownerReferences | default([]) | length == 0
+      - item.metadata.labels | default({}) | dict2items | selectattr('key', 'match', '^operators\.coreos\.com/') | list | length == 0
+      - >-
+        (gateway_defaults_verificar_solo | default(true) | bool and plataforma_gestor | default('ansible') == 'argocd') or
+        item.metadata.labels | default({}) | dict2items | selectattr('key', 'match', '^argocd\.argoproj\.io/') | list | length == 0
+      - >-
+        (item.metadata.labels | default({})).get('app.kubernetes.io/managed-by', 'workshop') == 'workshop' or
+        ((gateway_defaults_verificar_solo | default(true) | bool and plataforma_gestor | default('ansible') == 'argocd') and
+        (item.metadata.labels | default({})).get('app.kubernetes.io/managed-by', '') == 'argocd')
+      - >-
+        (gateway_defaults_verificar_solo | default(true) | bool and plataforma_gestor | default('ansible') == 'argocd') or
+        item.metadata.annotations | default({}) | dict2items | selectattr('key', 'match', '^argocd\.argoproj\.io/') | list | length == 0
+    fail_msg: El ConfigMap no pertenece exclusivamente al taller; se cancela sin escribir.
+    quiet: true
+  loop: "{{ gateway_defaults_named.resources + gateway_defaults_labeled.resources }}"

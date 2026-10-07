@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab08
+  author: workshop-connectivity-link
+  description: Lab 8 · Servicio externo (ExternalName + ServiceEntry), cuota propia y permiso por rol de Keycloak.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

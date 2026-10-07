@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  description: Instancia Argo CD aislada para adopción explícita de plataforma
+  author: RH Workshop
+  license: MIT
+  min_ansible_version: '2.16'
+dependencies: []

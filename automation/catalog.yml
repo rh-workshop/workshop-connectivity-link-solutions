@@ -1,0 +1,341 @@
+# Rutas relativas a automation/, excepto source_page (raíz del repositorio).
+schema_version: 1
+labs:
+- id: lab00
+  source_page: modules/ROOT/pages/lab0.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: instructor
+    scope: participant_access_in_existing_idp
+    conditions: Alta explícita en IdP HTPasswd existente; login y navegación siguen manuales hasta validación real.
+  dependencies: [comun]
+  playbook: ansible/playbooks/lab00.yml
+  role: labs/lab00/roles/lab00
+  cleanup: null
+  validations:
+    tasks: labs/lab00/roles/lab00/tasks/main.yml
+    execution: manual
+- id: lab01
+  source_page: modules/ROOT/pages/lab1.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: shared_read_only
+    conditions: Solo lectura; requiere plataforma preparada por el instructor.
+  dependencies:
+  - comun
+  playbook: ansible/playbooks/lab01.yml
+  role: labs/lab01/roles/lab01
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab01
+    tasks: labs/lab01/roles/lab01/tasks/limpiar.yml
+    effect: read_only
+  validations:
+    tasks: labs/lab01/roles/lab01/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab02
+  source_page: modules/ROOT/pages/lab2.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: shared_read_only
+    conditions: Solo lectura; requiere GatewayClass preparada por el instructor.
+  dependencies:
+  - comun
+  playbook: ansible/playbooks/lab02.yml
+  role: labs/lab02/roles/lab02
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab02
+    tasks: labs/lab02/roles/lab02/tasks/limpiar.yml
+    effect: read_only
+  validations:
+    tasks: labs/lab02/roles/lab02/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab03
+  source_page: modules/ROOT/pages/lab3.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: Namespaces, DNS, TLS y realm requieren preparación del instructor.
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  playbook: ansible/playbooks/lab03.yml
+  role: labs/lab03/roles/lab03
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab03
+    tasks: labs/lab03/roles/lab03/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab03/roles/lab03/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab04
+  alias_of: lab04a
+  source_page: modules/ROOT/pages/lab4.adoc
+- id: lab04a
+  source_page: modules/ROOT/pages/lab4.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: Cuota y JWT se prueban en los namespaces del participante.
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  playbook: ansible/playbooks/lab04a.yml
+  role: labs/lab04a/roles/lab04a
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab04a
+    tasks: labs/lab04a/roles/lab04a/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab04a/roles/lab04a/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab04b
+  source_page: modules/ROOT/pages/lab4-api-key.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: La prueba cambia la autenticación de ruta y restaura JWT por defecto.
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/lab04b.yml
+  role: labs/lab04b/roles/lab04b
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab04b
+    tasks: labs/lab04b/roles/lab04b/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab04b/roles/lab04b/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab05
+  source_page: modules/ROOT/pages/lab5.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: instructor
+    scope: participant_and_shared_prerequisites
+    conditions: 'Observabilidad compartida: verificar por defecto; instalación solo
+      por instructor.'
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/lab05.yml
+  role: labs/lab05/roles/lab05
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab05
+    tasks: labs/lab05/roles/lab05/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab05/roles/lab05/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab06
+  source_page: modules/ROOT/pages/lab6.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: Argo CD compartido; el modo local usa Git efímero, el externo requiere
+      permisos.
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/lab06.yml
+  role: labs/lab06/roles/lab06
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab06
+    tasks: labs/lab06/roles/lab06/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab06/roles/lab06/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab07
+  source_page: modules/ROOT/pages/lab7-cloud.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: 'Solo LoadBalancer: requiere zona pública, DNS y emisor ACME; se omite
+      en route.'
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/lab07.yml
+  role: labs/lab07/roles/lab07
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab07
+    tasks: labs/lab07/roles/lab07/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab07/roles/lab07/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab08
+  source_page: modules/ROOT/pages/lab8-servicios-externos.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: Requiere lab08_ext_host; OpenTofu crea infraestructura AWS fuera del
+      clúster.
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/lab08.yml
+  role: labs/lab08/roles/lab08
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab08
+    tasks: labs/lab08/roles/lab08/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab08/roles/lab08/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab09
+  source_page: modules/ROOT/pages/lab9-migracion-3scale.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: 'Claves de demostración y planes: no usar credenciales reales.'
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/lab09.yml
+  role: labs/lab09/roles/lab09
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab09
+    tasks: labs/lab09/roles/lab09/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab09/roles/lab09/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab10
+  source_page: modules/ROOT/pages/lab10-gobierno.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: Overrides afecta todas las rutas del Gateway del participante.
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/lab10.yml
+  role: labs/lab10/roles/lab10
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab10
+    tasks: labs/lab10/roles/lab10/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab10/roles/lab10/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab11
+  source_page: modules/ROOT/pages/lab11-seguridad-b2b.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: instructor
+    scope: participant_and_shared_prerequisites
+    conditions: 'Otro LoadBalancer y cambios de red: instructor, capacidad cloud y
+      restauración.'
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/lab11.yml
+  role: labs/lab11/roles/lab11
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab11
+    tasks: labs/lab11/roles/lab11/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab11/roles/lab11/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: lab12
+  source_page: modules/ROOT/pages/lab12-operacion.adoc
+  external_dependencies:
+  - lab05
+  ownership:
+    content: workshop-connectivity-link
+    operator: instructor
+    scope: participant_and_shared_prerequisites
+    conditions: Requiere servicio externo Lab8 y observabilidad Lab5; demos globales
+      son opt-in.
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  - lab08
+  playbook: ansible/playbooks/lab12.yml
+  role: labs/lab12/roles/lab12
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_lab12
+    tasks: labs/lab12/roles/lab12/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/lab12/roles/lab12/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks
+- id: bonus-ia
+  source_page: modules/ROOT/pages/ia-practica.adoc
+  ownership:
+    content: workshop-connectivity-link
+    operator: participant
+    scope: participant_and_shared_prerequisites
+    conditions: Backend simulado; límite de tokens y ventana de cuota, sin proveedor
+      IA real.
+  dependencies:
+  - comun
+  - tenant
+  - keycloak_realm
+  - lab03
+  - lab04a
+  playbook: ansible/playbooks/bonus_tokens.yml
+  role: labs/bonus-ia/roles/bonus_tokens
+  cleanup:
+    playbook: ansible/playbooks/limpieza.yml
+    tag: limpieza_bonus_tokens
+    tasks: labs/bonus-ia/roles/bonus_tokens/tasks/limpiar.yml
+    effect: participant_resources
+  validations:
+    tasks: labs/bonus-ia/roles/bonus_tokens/tasks/validar.yml
+    execution: ansible_runtime_not_proven_by_offline_checks

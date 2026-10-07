@@ -1,0 +1,21 @@
+---
+# Preparación inicial compartida antes del handoff GitOps; sin recursos tenant.
+- name: Bootstrap · plataforma compartida de observabilidad
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+  tasks:
+    - name: Exigir preparación inicial explícita de observabilidad
+      ansible.builtin.assert:
+        that: not lab05_plataforma_verificar_solo | default(true) | bool
+        fail_msg: Activa lab05_plataforma_verificar_solo=false para preparar la observabilidad compartida.
+        quiet: true
+
+    - name: Preparar la plataforma compartida con su implementación canónica
+      ansible.builtin.include_role:
+        name: lab05
+        tasks_from: plataforma_instalar
+      vars:
+        lab05_reiniciar_gateway: false

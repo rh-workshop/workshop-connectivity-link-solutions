@@ -1,0 +1,41 @@
+---
+- name: Esperar que la Subscription indique installedCSV
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    namespace: "{{ gate_operator.namespace }}"
+  register: gate_subscriptions
+  vars:
+    gate_matching_subscriptions: >-
+      {{ gate_subscriptions.resources | selectattr('spec.name', 'equalto', gate_operator.nombre) | list }}
+  until: >-
+    gate_matching_subscriptions | length == 1 and
+    gate_matching_subscriptions[0].status.installedCSV | default('') | length > 0
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"
+
+- name: Guardar la identidad exacta del CSV instalado
+  ansible.builtin.set_fact:
+    platform_gate_installed_csv: >-
+      {{ (gate_subscriptions.resources | selectattr('spec.name', 'equalto', gate_operator.nombre) | first).status.installedCSV }}
+
+- name: Esperar CSV Succeeded mediante el helper canónico
+  ansible.builtin.include_role:
+    name: plataforma
+    tasks_from: esperar_csv
+  vars:
+    csv_namespace: "{{ gate_operator.namespace }}"
+    csv_prefijo: "{{ gate_operator.csv_prefijo }}"
+
+- name: Comprobar que el CSV instalado por esta Subscription está Succeeded
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ platform_gate_installed_csv }}"
+    namespace: "{{ gate_operator.namespace }}"
+  register: gate_installed_csv
+  until: >-
+    gate_installed_csv.resources | length == 1 and
+    gate_installed_csv.resources[0].status.phase | default('') == 'Succeeded'
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"

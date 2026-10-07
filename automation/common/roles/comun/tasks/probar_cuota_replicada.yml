@@ -1,0 +1,86 @@
+---
+# Observa contadores locales distribuidos: no promete alcanzar límite×réplicas.
+# vars: cuota_url, cuota_cabeceras, cuota_limite, cuota_replicas, cuota_muestra,
+#       cuota_ventana_segundos (60), cuota_json_contract opcional.
+- name: Exigir parámetros enteros de una muestra con contadores locales
+  ansible.builtin.assert:
+    that:
+      - item | int > 0
+      - item | int | string == item | string
+    quiet: true
+  loop:
+    - "{{ cuota_limite }}"
+    - "{{ cuota_replicas }}"
+    - "{{ cuota_muestra }}"
+    - "{{ cuota_ventana_segundos | default(60) }}"
+
+- name: Exigir una muestra que supere la capacidad conjunta
+  ansible.builtin.assert:
+    that:
+      - cuota_replicas | int > 1
+      - cuota_muestra | int > (cuota_limite | int * cuota_replicas | int)
+    quiet: true
+
+- name: Esperar una ventana completa sin tráfico del consumidor
+  ansible.builtin.pause:
+    seconds: "{{ cuota_ventana_segundos | default(60) | int + 1 }}"
+
+- name: Registrar inicio de la muestra en el controlador
+  ansible.builtin.command: date +%s
+  delegate_to: localhost
+  changed_when: false
+  register: cuota_exacta_inicio
+
+- name: Obtener la muestra sin reintentos mediante la serie compartida
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_serie
+  vars:
+    serie_prueba: Contadores locales distribuidos
+    serie_url: "{{ cuota_url }}"
+    serie_cabeceras: "{{ cuota_cabeceras | default({}) }}"
+    serie_n: "{{ cuota_muestra | int }}"
+    serie_contenido: "{{ cuota_json_contract | default([]) | length > 0 }}"
+
+- name: Registrar fin de la muestra con el mismo reloj
+  ansible.builtin.command: date +%s
+  delegate_to: localhost
+  changed_when: false
+  register: cuota_exacta_fin
+
+- name: Conservar códigos y duración de la muestra
+  ansible.builtin.set_fact:
+    cuota_exacta_codigos: "{{ wk_serie_codigos }}"
+    cuota_exacta_duracion: "{{ cuota_exacta_fin.stdout | int - cuota_exacta_inicio.stdout | int }}"
+
+- name: Exigir respuestas válidas y rechazos sin superar la capacidad conjunta
+  ansible.builtin.assert:
+    that:
+      - cuota_exacta_duracion | int >= 0
+      - cuota_exacta_duracion | int < cuota_ventana_segundos | default(60) | int
+      - cuota_exacta_codigos | length == cuota_muestra | int
+      - cuota_exacta_codigos | difference([200, 429]) | length == 0
+      - cuota_exacta_codigos | select('equalto', 200) | list | length >= cuota_limite | int
+      - cuota_exacta_codigos | select('equalto', 429) | list | length > 0
+      - cuota_exacta_codigos | select('equalto', 200) | list | length <= (cuota_limite | int * cuota_replicas | int)
+    fail_msg: La muestra no demuestra contadores locales válidos dentro de una ventana; solo se admiten éxitos 200 y rechazos 429, ambos presentes.
+    quiet: true
+
+- name: Comprobar los cuerpos de los 200 recibidos sin peticiones adicionales
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_http_contrato
+    apply:
+      no_log: true
+  vars:
+    comun_http: "{{ cuota_exacta_respuesta }}"
+    http_json_contract: "{{ cuota_json_contract | default([]) }}"
+    http_no_log: true
+  loop: "{{ comun_serie.results | selectattr('status', 'equalto', 200) | list }}"
+  loop_control:
+    loop_var: cuota_exacta_respuesta
+  when: cuota_json_contract | default([]) | length > 0
+
+- name: Mostrar solo los códigos de la muestra finita
+  ansible.builtin.debug:
+    msg: "Contadores locales: {{ cuota_exacta_codigos | join(' ') }} ({{ cuota_exacta_duracion }} s); el reparto no garantiza alcanzar la capacidad conjunta."

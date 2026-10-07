@@ -1,0 +1,24 @@
+# Solo valores sintéticos; comparación con fuentes reales, sin manifiestos copiados.
+source_page: modules/ROOT/pages/lab4.adoc
+render_fixture: tests/fixtures/render-all.yml
+shell:
+  LAB_ID: demo
+  NS_APP: atp-demo
+  NS_GATEWAY: gateway-demo
+  LAB_HOST: api-demo.workshop.example.test
+  GATEWAY_CLASS: istio
+  KEYCLOAK_ISSUER: https://identity.example.test/realms/realm-demo
+  KEYCLOAK_REALM: realm-demo
+  LAB_API_KEY: DEMO-NOT-A-REAL-API-KEY
+  CLOUD_HOST: api-demo.cloud.example.test
+  ACME_ISSUER: letsencrypt-dns01
+  EXT_HOST: inventory.example.test
+  EXT_PORT: 8080
+heredoc_indices:
+- 0
+- 1
+- 2
+templates:
+- labs/lab04a/roles/lab04a/templates/bank-api.yaml.j2
+- labs/lab04a/roles/lab04a/templates/httproute.yaml.j2
+- labs/lab04a/roles/lab04a/templates/rate-limit-policy.yaml.j2

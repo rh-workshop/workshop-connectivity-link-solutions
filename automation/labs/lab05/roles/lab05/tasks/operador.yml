@@ -1,0 +1,22 @@
+---
+# Instala un operador por OLM solo si su namespace no tiene ya una Subscription
+# a ese paquete (con cualquier nombre). Nunca modifica una existente.
+- name: "Buscar Subscriptions y OperatorGroups en {{ lab05_operador.namespace }}"
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    namespace: "{{ lab05_operador.namespace }}"
+  loop:
+    - {v: operators.coreos.com/v1alpha1, k: Subscription}
+    - {v: operators.coreos.com/v1, k: OperatorGroup}
+  loop_control:
+    label: "{{ item.k }}"
+  register: lab05_olm
+
+- name: "Crear Namespace, OperatorGroup y Subscription de {{ lab05_operador.nombre }}"
+  kubernetes.core.k8s:
+    state: present
+    template: operador.yaml.j2
+  vars:
+    lab05_og_crear: "{{ lab05_olm.results[1].resources | length == 0 }}"
+  when: lab05_olm.results[0].resources | selectattr('spec.name', 'equalto', lab05_operador.nombre) | list | length == 0

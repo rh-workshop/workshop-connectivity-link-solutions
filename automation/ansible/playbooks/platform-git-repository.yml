@@ -1,0 +1,9 @@
+---
+# Fuente privada de validación: verificar es el modo por defecto, nunca instalar.
+- name: Fuente Git interna persistente de la plataforma
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: platform_git_repository

@@ -1,0 +1,21 @@
+---
+# Operación Git en el repo efímero (commits dentro del pod git-politicas).
+#   vars: lab06_git_op (publicar | revertir), lab06_limite, lab06_git_mensaje
+#   deja: lab06_git (cambio: bool, commit: sha)
+- name: "Git · {{ lab06_git_op }}{{ (' límite ' ~ lab06_limite) if lab06_git_op == 'publicar' else '' }}"
+  kubernetes.core.k8s_exec:
+    namespace: "{{ wk_ns_app }}"
+    pod: "{{ lab06_pod }}"
+    command: >-
+      {{ (['bash', '/opt/wk/git-lab.sh', lab06_git_op]
+          + ([lab06_limite | string, lab06_git_mensaje] if lab06_git_op == 'publicar' else []))
+         | map('quote') | join(' ') }}
+  register: lab06_exec
+  changed_when: lab06_exec.stdout is search('^(PUBLICADO|REVERTIDO) ', multiline=true)
+  failed_when: lab06_exec.rc | default(lab06_exec.return_code | default(1)) != 0
+
+- name: Registrar el commit resultante
+  ansible.builtin.set_fact:
+    lab06_git:
+      cambio: "{{ lab06_exec is changed }}"
+      commit: "{{ lab06_exec.stdout | trim | split(' ') | last }}"

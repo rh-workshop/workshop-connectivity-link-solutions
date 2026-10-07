@@ -1,0 +1,30 @@
+---
+# El techo primero: afecta a todas las rutas del Gateway.
+- name: Borrar el techo del Gateway si quedó
+  kubernetes.core.k8s:
+    state: absent
+    api_version: kuadrant.io/v1
+    kind: RateLimitPolicy
+    name: "techo-global-{{ lab_id }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+
+- name: Borrar políticas, ruta y backends de gobierno
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_app }}"
+    wait: true
+  loop:
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "gobierno-auth-{{ lab_id }}"}
+    - {v: kuadrant.io/v1, k: RateLimitPolicy, n: "gobierno-rl-{{ lab_id }}"}
+    - {v: gateway.networking.k8s.io/v1, k: HTTPRoute, n: "gobierno-route-{{ lab_id }}"}
+    - {v: apps/v1, k: Deployment, n: gobierno-api-v1}
+    - {v: apps/v1, k: Deployment, n: gobierno-api-v2}
+    - {v: v1, k: Service, n: gobierno-api-v1}
+    - {v: v1, k: Service, n: gobierno-api-v2}
+    - {v: v1, k: ConfigMap, n: gobierno-api-src}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"

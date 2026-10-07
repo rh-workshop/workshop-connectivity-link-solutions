@@ -1,0 +1,35 @@
+---
+# Los objetos existentes se conservan; actualizar exige propiedad explícita.
+- name: Consultar el recurso por identidad exacta
+  kubernetes.core.k8s_info:
+    api_version: "{{ recurso_definicion.apiVersion }}"
+    kind: "{{ recurso_definicion.kind }}"
+    name: "{{ recurso_definicion.metadata.name }}"
+    namespace: "{{ recurso_definicion.metadata.namespace | default(omit) }}"
+  register: comun_recurso_previo
+  no_log: "{{ recurso_sensible | default(false) | bool }}"
+
+- name: Rechazar la adopción implícita de recursos ajenos
+  ansible.builtin.assert:
+    that:
+      - >-
+        comun_recurso_previo.resources | length == 0 or
+        (comun_recurso_previo.resources[0].metadata.labels | default({})).get('workshop.module', '')
+        == recurso_propietario | default('connectivity-link')
+    fail_msg: >-
+      {{ recurso_definicion.kind }}/{{ recurso_definicion.metadata.name }} ya existe sin la propiedad esperada.
+      Revisa su propietario antes de una adopción explícita.
+    quiet: true
+  when: recurso_actualizar_gestionado | default(false) | bool
+  no_log: "{{ recurso_sensible | default(false) | bool }}"
+
+- name: Crear el recurso ausente o reconciliar el recurso propio autorizado
+  kubernetes.core.k8s:
+    state: present
+    definition: >-
+      {{ recurso_definicion | combine({'metadata': {'labels':
+         {'workshop.module': recurso_propietario | default('connectivity-link')}}}, recursive=true) }}
+  when: >-
+    comun_recurso_previo.resources | length == 0 or
+    recurso_actualizar_gestionado | default(false) | bool
+  no_log: "{{ recurso_sensible | default(false) | bool }}"

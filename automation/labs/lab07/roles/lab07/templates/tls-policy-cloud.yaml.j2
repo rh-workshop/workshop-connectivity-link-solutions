@@ -1,0 +1,17 @@
+# TLSPolicy con el emisor ACME: certificado público, curl sin -k (paso 8).
+apiVersion: kuadrant.io/v1
+kind: TLSPolicy
+metadata:
+  name: tls-policy-cloud-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ lab07_gateway }}
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: {{ lab07_acme_issuer }}

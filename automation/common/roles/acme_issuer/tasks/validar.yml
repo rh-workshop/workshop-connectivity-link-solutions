@@ -1,0 +1,30 @@
+---
+- name: Limitar el modo participante a identidades propias sin tocar el emisor compartido
+  ansible.builtin.assert:
+    that:
+      - lab_id is match('^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$')
+      - acme_issuer_kind == 'ClusterIssuer'
+      - acme_issuer_nombre == 'letsencrypt-dns01-' ~ lab_id
+      - acme_secret_nombre == 'acme-route53-credentials-' ~ lab_id
+      - acme_cuenta_secret == 'letsencrypt-dns01-' ~ lab_id ~ '-account'
+      - acme_secret_namespace == 'cert-manager'
+    quiet: true
+  when: acme_issuer_participant_mode | default(false) | bool
+
+- name: Exigir zona y hosted zone privadas explícitas
+  ansible.builtin.assert:
+    that:
+      - acme_route53_hosted_zone_id | default('') is match('^Z[A-Z0-9]+$')
+      - acme_dns_zone | default('') is match('^[a-z0-9][a-z0-9.-]*[a-z0-9]$')
+      - acme_servidor is match('^https://[^/]+/.+')
+      - acme_issuer_kind in ['ClusterIssuer', 'Issuer']
+      - >-
+        (acme_issuer_kind == 'ClusterIssuer' and acme_secret_namespace == 'cert-manager') or
+        (acme_issuer_kind == 'Issuer' and acme_issuer_namespace | length > 0
+         and acme_secret_namespace == acme_issuer_namespace)
+      - acme_route53_region | length > 0
+      - acme_email | length == 0 or acme_email is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
+    fail_msg: >-
+      Define acme_route53_hosted_zone_id y acme_dns_zone en configuración privada,
+      servidor ACME HTTPS y Secret en cert-manager (ClusterIssuer) o en el namespace del Issuer. El email puede omitirse.
+    quiet: true

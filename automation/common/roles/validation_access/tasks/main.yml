@@ -1,0 +1,69 @@
+---
+- name: Restringir el acceso al namespace del participante y a la identidad prevista
+  ansible.builtin.assert:
+    that:
+      - wk_ns_app == 'atp-' ~ lab_id
+      - validation_access_service_account == 'validation-reader'
+      - validation_access_binding == 'cl-validation-reader-' ~ lab_id
+    quiet: true
+
+- name: Comprobar que existe el rol de lectura de monitorización
+  kubernetes.core.k8s_info:
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    name: cluster-monitoring-view
+  register: validation_access_role
+
+- name: Exigir el rol oficial existente sin crearlo ni ampliarlo
+  ansible.builtin.assert:
+    that: validation_access_role.resources | length == 1
+    quiet: true
+
+- name: Consultar la identidad de validación existente
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ServiceAccount
+    name: "{{ validation_access_service_account }}"
+    namespace: "{{ wk_ns_app }}"
+  register: validation_access_sa
+
+- name: Consultar el vínculo existente antes de cualquier escritura
+  kubernetes.core.k8s_info:
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    name: "{{ validation_access_binding }}"
+  register: validation_access_crb
+
+- name: Rechazar una ServiceAccount ajena
+  ansible.builtin.assert:
+    that:
+      - validation_access_sa.resources[0].metadata.labels['workshop.user'] | default('') == lab_id
+      - validation_access_sa.resources[0].metadata.labels['workshop.module'] | default('') == 'connectivity-link'
+    quiet: true
+  when: validation_access_sa.resources | length > 0
+
+- name: Rechazar un vínculo ajeno o con permisos o sujetos diferentes
+  ansible.builtin.assert:
+    that:
+      - validation_access_crb.resources[0].metadata.labels['workshop.user'] | default('') == lab_id
+      - validation_access_crb.resources[0].metadata.labels['workshop.module'] | default('') == 'connectivity-link'
+      - validation_access_crb.resources[0].roleRef == {'apiGroup':'rbac.authorization.k8s.io', 'kind':'ClusterRole', 'name':'cluster-monitoring-view'}
+      - validation_access_crb.resources[0].subjects == [{'kind':'ServiceAccount', 'name':validation_access_service_account, 'namespace':wk_ns_app}]
+    quiet: true
+  when: validation_access_crb.resources | length > 0
+
+- name: Crear acceso de lectura sólo por solicitud explícita del instructor
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('ansible.builtin.template', 'access.yml.j2') | from_yaml_all | list }}"
+  when: not validation_access_verificar_solo | bool
+
+- name: Verificar que el acceso ya existe sin modificarlo
+  ansible.builtin.assert:
+    that:
+      - validation_access_sa.resources | length == 1
+      - validation_access_crb.resources | length == 1
+      - not validation_access_sa.resources[0].automountServiceAccountToken | default(true) | bool
+    fail_msg: Acceso ausente o token automático habilitado; la instalación exige validation_access_verificar_solo=false.
+    quiet: true
+  when: validation_access_verificar_solo | bool

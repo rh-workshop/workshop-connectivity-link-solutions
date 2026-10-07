@@ -1,0 +1,106 @@
+---
+# «Comprueba el resultado» del Bonus: las respuestas admitidas traen
+# usage.total_tokens, al consumirse el presupuesto llega el 429 y, tras una
+# ventana completa, vuelve a admitirse tráfico.
+- name: Comprobar el límite efectivo antes de consumir tokens
+  ansible.builtin.import_tasks: limite_efectivo.yml
+
+- name: Pedir el token de alice a Keycloak
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: alice
+
+- name: Fijar la petición a la API de IA
+  ansible.builtin.set_fact:
+    bonus_url: "https://{{ wk_lab_host }}/v1/chat/completions"
+    bonus_cuerpo:
+      model: mock
+      messages:
+        - role: user
+          content: hola
+
+- name: Primera llamada admitida (espera a la ventana si el presupuesto está agotado)
+  block:
+    - name: POST /v1/chat/completions con JWT hasta recibir 200
+      ansible.builtin.uri:
+        url: "{{ bonus_url }}"
+        method: POST
+        body_format: json
+        body: "{{ bonus_cuerpo }}"
+        headers:
+          Authorization: "Bearer {{ wk_token }}"
+        validate_certs: false
+        status_code: [200, 401, 404, 429, 503]
+        return_content: true
+        timeout: 15
+      register: bonus_primera
+      until: bonus_primera.status == 200
+      retries: "{{ http_reintentos }}"
+      delay: "{{ http_intervalo }}"
+      no_log: true
+  rescue:
+    - name: Fallar si la API de IA no responde 200
+      ansible.builtin.fail:
+        msg: "{{ bonus_url }} no devolvió 200 con el JWT de alice (último HTTP {{ bonus_primera.status | default('?') }})."
+
+- name: Comprobar el contrato de consumo de la primera respuesta
+  ansible.builtin.import_tasks: usage_contract.yml
+  vars:
+    bonus_respuesta: "{{ bonus_primera }}"
+
+- name: Consumir el presupuesto de tokens hasta el 429
+  ansible.builtin.include_tasks: consumir.yml
+  vars:
+    bonus_fase: primera ventana
+
+- name: Tras una ventana completa vuelve a admitirse tráfico
+  block:
+    - name: Repetir la llamada hasta que la ventana se renueve (200)
+      ansible.builtin.uri:
+        url: "{{ bonus_url }}"
+        method: POST
+        body_format: json
+        body: "{{ bonus_cuerpo }}"
+        headers:
+          Authorization: "Bearer {{ wk_token }}"
+        validate_certs: false
+        status_code: [200, 429]
+        return_content: true
+        timeout: 15
+      register: bonus_renovada
+      until: bonus_renovada.status == 200
+      retries: 20
+      delay: 5
+      no_log: true
+  rescue:
+    - name: Fallar si el presupuesto no se renueva
+      ansible.builtin.fail:
+        msg: "Tras 100 s la API de IA sigue devolviendo {{ bonus_renovada.status | default('?') }}: la ventana de {{ bonus_tokens_ventana }} no se renovó."
+
+- name: Comprobar el contrato de consumo tras renovar la ventana
+  ansible.builtin.import_tasks: usage_contract.yml
+  vars:
+    bonus_respuesta: "{{ bonus_renovada }}"
+
+# Ventana recién renovada: la llamada anterior (200) es la primera de la
+# ventana, así que el corte llega tras varios 200 como en el lab.
+- name: Consumir de nuevo el presupuesto desde el inicio de la ventana
+  ansible.builtin.include_tasks: consumir.yml
+  vars:
+    bonus_fase: ventana renovada
+
+- name: Comprobar que hubo varios 200 antes del corte en la ventana renovada
+  ansible.builtin.assert:
+    that: bonus_consumo.attempts | default(1) | int >= 2
+    fail_msg: >-
+      El 429 llegó en la primera petición tras renovarse la ventana (una llamada de {{ bonus_renovada.json.usage.total_tokens | default('?') }}
+      tokens): la política no cuenta tokens como se espera o Limitador conserva un límite anterior (recrea la política).
+    quiet: true
+
+- name: Resumen del Bonus
+  ansible.builtin.debug:
+    msg:
+      - "Bonus OK · {{ bonus_url }} · TokenRateLimitPolicy {{ bonus_tokens_limite }} tokens/{{ bonus_tokens_ventana }} por usuario"
+      - "Respuesta admitida con usage.total_tokens={{ bonus_renovada.json.usage.total_tokens }} · ventana renovada: {{ bonus_consumo.attempts - 1 }} llamadas más en 200 y 429 en la {{ bonus_consumo.attempts + 1 }}.ª de la ventana"

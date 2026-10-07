@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab07
+  author: workshop-connectivity-link
+  description: "Lab 7 · Publicar la API en la nube: segundo Gateway con ELB, DNSPolicy en zona pública y certificado ACME."
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

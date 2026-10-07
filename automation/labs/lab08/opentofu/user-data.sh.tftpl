@@ -1,0 +1,46 @@
+#!/bin/bash
+# API de inventario de ejemplo: devuelve JSON y muestra qué cabeceras le llegan desde el gateway.
+mkdir -p /opt/inventario
+cat > /opt/inventario/app.py <<'PY'
+import json, sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = {
+            "service": "inventario-externo",
+            "host": "EC2 RHEL fuera del cluster",
+            "path": self.path,
+            "items": [{"sku": "A-100", "stock": 12}, {"sku": "B-200", "stock": 0}],
+            "authorization_recibida": "Authorization" in self.headers,
+            "x_forwarded_for": self.headers.get("X-Forwarded-For"),
+            "host_header": self.headers.get("Host"),
+        }
+        data = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+ThreadingHTTPServer(("0.0.0.0", int(sys.argv[1])), Handler).serve_forever()
+PY
+
+cat > /etc/systemd/system/inventario.service <<UNIT
+[Unit]
+Description=API inventario externa
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/inventario/app.py ${api_port}
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now inventario

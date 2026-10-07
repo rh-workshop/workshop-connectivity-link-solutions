@@ -1,0 +1,44 @@
+# Lab 11 · paso 13 (capa 2): Authorino lee el certificado de
+# x-forwarded-client-cert, lo valida contra el Secret etiquetado de la CA y
+# autoriza solo a la organización ACME Pagos.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: b2b-auth-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: b2b-route-{{ lab_id }}
+  rules:
+    authentication:
+      "certificado-de-socio":
+        x509:
+          source:
+            xfccHeader: x-forwarded-client-cert
+          allNamespaces: true
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: b2b-ca-{{ lab_id }}
+    authorization:
+      "solo-acme-pagos":
+        patternMatching:
+          patterns:
+            - predicate: auth.identity.Organization[0] == "ACME Pagos"
+    response:
+      unauthenticated:
+        code: 401
+        message:
+          value: "Certificado de cliente emitido por la CA de socios requerido"
+      unauthorized:
+        code: 403
+        message:
+          value: "El socio no esta autorizado en esta API"
+      success:
+        headers:
+          "x-client-common-name":
+            plain:
+              expression: auth.identity.CommonName

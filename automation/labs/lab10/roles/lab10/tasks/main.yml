@@ -1,0 +1,85 @@
+---
+# Lab 10 · Gobierno y ciclo de vida de una API (lab10-gobierno.adoc).
+# Estado final del lab: gobierno-api v1/v2, ruta canary con aviso de retirada
+# de v1, cuota de la ruta, AuthPolicy por scope y SIN techo en el Gateway (el
+# lab lo retira en el paso 4; la validación lo aplica y lo retira).
+
+- name: Fijar la URL de la API de gobierno
+  ansible.builtin.set_fact:
+    wk_gob_url: "https://{{ wk_lab_host }}/gobierno/v1/saldo"
+
+- name: Retirar el techo del Gateway si quedó de una ejecución interrumpida
+  kubernetes.core.k8s:
+    state: absent
+    api_version: kuadrant.io/v1
+    kind: RateLimitPolicy
+    name: "techo-global-{{ lab_id }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+
+- name: Desplegar gobierno-api v1 y v2
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: backend.yaml.j2
+
+- name: Esperar a que v1 y v2 estén disponibles
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apps/v1
+    espera_kind: Deployment
+    espera_nombre: "gobierno-api-{{ item }}"
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Available
+  loop: [v1, v2]
+
+- name: Publicar la ruta canary con aviso de retirada de v1
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: httproute.yaml.j2
+
+- name: Esperar a que el Gateway acepte la ruta de gobierno
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_ruta
+  vars:
+    ruta_nombre: "gobierno-route-{{ lab_id }}"
+
+- name: Crear la cuota de la ruta y la AuthPolicy por scope
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: "{{ item }}"
+  loop:
+    - rate-limit-ruta.yaml.j2
+    - auth-policy.yaml.j2
+
+- name: Esperar a las políticas de gobierno Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: "{{ item.k }}"
+    espera_nombre: "{{ item.n }}"
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Enforced
+  loop:
+    - {k: RateLimitPolicy, n: "gobierno-rl-{{ lab_id }}"}
+    - {k: AuthPolicy, n: "gobierno-auth-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Validar el Lab 10
+  ansible.builtin.import_tasks: validar.yml
+  when: lab10_validar | bool
+  tags: [validar]

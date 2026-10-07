@@ -1,0 +1,147 @@
+---
+- name: Validar la operación explícita
+  ansible.builtin.assert:
+    that: platform_argocd_operation in ['verificar', 'instalar', 'configurar', 'configurar_controlador']
+    quiet: true
+
+- name: Verificar el operador compartido sin instalarlo ni exigir la instancia de Lab 6
+  ansible.builtin.include_role:
+    name: gitops_bootstrap
+    tasks_from: operador
+  vars:
+    gitops_bootstrap_verificar_solo: true
+
+- name: Consultar el esquema real de la API Argo CD
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: argocds.argoproj.io
+  register: platform_argocd_crd
+
+- name: Seleccionar el esquema servido v1beta1
+  ansible.builtin.set_fact:
+    platform_argocd_versions: "{{ platform_argocd_crd.resources[0].spec.versions | selectattr('name', 'equalto', 'v1beta1') | selectattr('served', 'equalto', true) | list }}"
+
+- name: Exigir los campos del aislamiento en el CRD antes de escribir
+  ansible.builtin.assert:
+    that:
+      - platform_argocd_versions | length == 1
+      - platform_argocd_versions[0].schema.openAPIV3Schema.properties.spec.properties.defaultClusterScopedRoleDisabled.type == 'boolean'
+      - platform_argocd_versions[0].schema.openAPIV3Schema.properties.spec.properties.controller.properties.respectRBAC.type == 'string'
+      - platform_argocd_versions[0].schema.openAPIV3Schema.properties.spec.properties.extraConfig.type == 'object'
+      - platform_argocd_versions[0].schema.openAPIV3Schema.properties.spec.properties.extraConfig.additionalProperties.type == 'string'
+    fail_msg: El CRD instalado no admite el contrato de aislamiento; no se escribe.
+    quiet: true
+
+- name: Consultar el namespace aislado sin modificarlo
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ wk_platform_argocd.namespace }}"
+  register: platform_argocd_ns
+
+- name: Rechazar un namespace ajeno o gestionado por otra instancia
+  ansible.builtin.assert:
+    that:
+      - item.metadata.labels | default({}) | dict2items | selectattr('key', 'equalto', 'argocd.argoproj.io/managed-by') | list | length == 0
+      - item.metadata.labels | default({}) | dict2items | selectattr('key', 'equalto', 'argocd.argoproj.io/managed-by-cluster-argocd') | list | length == 0
+      - item.metadata.labels['workshop.module'] | default('') == platform_argocd_labels['workshop.module']
+      - item.metadata.labels['workshop.component'] | default('') == platform_argocd_labels['workshop.component']
+      - item.metadata.deletionTimestamp is not defined
+    quiet: true
+  loop: "{{ platform_argocd_ns.resources }}"
+
+- name: Consultar la instancia específica sin modificarla
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: "{{ wk_platform_argocd.name }}"
+    namespace: "{{ wk_platform_argocd.namespace }}"
+  register: platform_argocd_instance
+
+- name: Rechazar una instancia ajena antes de instalar o verificar
+  ansible.builtin.assert:
+    that:
+      - item.metadata.labels['workshop.module'] | default('') == platform_argocd_labels['workshop.module']
+      - item.metadata.labels['workshop.component'] | default('') == platform_argocd_labels['workshop.component']
+      - item.metadata.deletionTimestamp is not defined
+      - item.spec.defaultClusterScopedRoleDisabled | default(false) | bool
+      - item.spec.controller.respectRBAC | default('') == 'normal' or (platform_argocd_operation == 'configurar_controlador' and item.spec.controller.respectRBAC | default('') == 'strict')
+      - item.spec.extraConfig['application.resourceTrackingMethod'] | default('') == 'annotation'
+    quiet: true
+  loop: "{{ platform_argocd_instance.resources }}"
+
+- name: Cambiar únicamente el modo del controlador owned bajo CAS explícito
+  ansible.builtin.include_tasks: controller.yml
+  when: platform_argocd_operation == 'configurar_controlador'
+
+- name: Crear namespace e instancia solamente en modo instalar
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('ansible.builtin.template', 'instance.yml.j2') | from_yaml_all | list }}"
+  when: platform_argocd_operation == 'instalar'
+
+- name: Esperar la instancia aislada Available con el helper común
+  ansible.builtin.include_role:
+    name: gitops_bootstrap
+    tasks_from: esperar_argocd
+  vars:
+    gitops_bootstrap_argocd_namespace: "{{ wk_platform_argocd.namespace }}"
+    gitops_bootstrap_argocd_instancia: "{{ wk_platform_argocd.name }}"
+
+- name: Verificar el ServiceAccount esperado sin generar credenciales
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ServiceAccount
+    namespace: "{{ wk_platform_argocd.namespace }}"
+    name: "{{ wk_platform_argocd.service_account }}"
+  register: platform_argocd_sa
+
+- name: Exigir el ServiceAccount de esta instancia
+  ansible.builtin.assert:
+    that: platform_argocd_sa.resources | length == 1
+    quiet: true
+
+- name: Consultar el ConfigMap local de tracking generado por el operador
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    namespace: "{{ wk_platform_argocd.namespace }}"
+    name: argocd-cm
+  register: platform_argocd_cm
+
+- name: Exigir tracking por annotation en la configuración local
+  ansible.builtin.assert:
+    that:
+      - platform_argocd_cm.resources | length == 1
+      - platform_argocd_cm.resources[0].data['application.resourceTrackingMethod'] | default('') == 'annotation'
+    quiet: true
+
+- name: Consultar los componentes generados del namespace aislado
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: "{{ item }}"
+    namespace: "{{ wk_platform_argocd.namespace }}"
+  loop: [Deployment, StatefulSet]
+  register: platform_argocd_workloads
+
+- name: Exigir componentes Deployment y controlador StatefulSet presentes
+  ansible.builtin.assert:
+    that:
+      - platform_argocd_workloads.results[0].resources | length > 0
+      - platform_argocd_workloads.results[1].resources | length > 0
+    quiet: true
+
+- name: Verificar readiness y ownership de cada componente generado
+  ansible.builtin.assert:
+    that:
+      - item.metadata.ownerReferences | default([]) | selectattr('kind', 'equalto', 'ArgoCD') | selectattr('name', 'equalto', wk_platform_argocd.name) | selectattr('uid', 'equalto', gitops_bootstrap_argocd.resources[0].metadata.uid) | list | length == 1
+      - item.status.observedGeneration | default(0) >= item.metadata.generation
+      - item.status.readyReplicas | default(0) == item.spec.replicas | default(1)
+      - item.spec.replicas | default(1) | int > 0
+    quiet: true
+  loop: "{{ platform_argocd_workloads.results | map(attribute='resources') | flatten }}"
+
+- name: Configurar o verificar el ámbito finito de la conexión local de esta instancia
+  ansible.builtin.include_tasks: scope.yml
+  when: platform_argocd_operation == 'configurar' or platform_argocd_target_namespaces | length > 0

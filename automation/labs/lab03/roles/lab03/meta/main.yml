@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab03
+  author: workshop-connectivity-link
+  description: Lab 3 · Gateway HTTPS, TLSPolicy, DNSPolicy y AuthPolicy JWT por defecto.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

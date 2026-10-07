@@ -1,0 +1,57 @@
+---
+# Espera a que el hostname de la API resuelva, en dos fases:
+#   1. TODOS los servidores autoritativos de la zona publican el registro. Route 53
+#      tarda hasta ~60 s en sincronizar un cambio; si el resolver local pregunta
+#      antes a un NS desactualizado, cachea el NXDOMAIN durante el TTL negativo de
+#      la zona (900 s en las zonas de RHDP).
+#   2. El resolver de ESTA máquina lo resuelve: se prueba con la misma pila que
+#      usan las pruebas HTTP (uri), aceptando cualquier respuesta HTTP.
+# Nota: con until, ansible-core 2.21 reutiliza los argumentos YA evaluados de la
+# tarea: un lookup dentro de set_fact no se repite. Por eso la espera se hace con
+# módulos, que sí se re-ejecutan en cada intento.
+#   vars: dns_nombre, dns_zona (opcional: ZONE DOMAIN del DNSRecord),
+#         dns_client_cert / dns_client_key (opcionales, TLS mTLS)
+- name: "Esperar a que todos los autoritativos publiquen {{ dns_nombre }}"
+  when: dns_verificar_autoritativos | default(true) | bool
+  block:
+    - name: "Consultar {{ dns_nombre }} en cada servidor autoritativo (sin recursión)"
+      wk_dns_autoritativo:
+        nombre: "{{ dns_nombre }}"
+        zona: "{{ dns_zona | default(omit) }}"
+      register: comun_dns_auth
+      until: comun_dns_auth.publicado | default(false)
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Fallar si los autoritativos no publican el registro
+      ansible.builtin.fail:
+        msg: >-
+          Los servidores autoritativos de {{ comun_dns_auth.zona | default('la zona') }} no publican
+          {{ dns_nombre }}: {{ comun_dns_auth.respuestas | default(comun_dns_auth.msg | default('')) | to_json }}.
+          Revisa la DNSPolicy, el DNSRecord y el Secret del proveedor.
+
+- name: "Esperar a que el resolver local resuelva {{ dns_nombre }}"
+  block:
+    - name: "Abrir una conexión HTTPS a {{ dns_nombre }} (cualquier código vale)"
+      ansible.builtin.uri:
+        url: "https://{{ dns_nombre }}/"
+        client_cert: "{{ dns_client_cert | default(omit) }}"
+        client_key: "{{ dns_client_key | default(omit) }}"
+        validate_certs: false
+        status_code: [-1, 200, 401, 403, 404, 429, 500, 502, 503]
+        timeout: 10
+      no_log: "{{ dns_client_cert is defined or dns_client_key is defined }}"
+      register: comun_dns_local
+      until: comun_dns_local.status != -1
+      retries: "{{ dns_espera_local_reintentos | default(200) }}"
+      delay: 5
+  rescue:
+    - name: Explicar por qué el resolver local no ve el registro
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Los autoritativos ya publican el registro' if dns_verificar_autoritativos | default(true) | bool
+             else 'La comprobación autoritativa fue omitida explícitamente en esta máquina' }};
+          desde esta máquina no se alcanza {{ dns_nombre }}
+          ({{ comun_dns_local.msg | default('sin respuesta') }}). Suele ser un NXDOMAIN cacheado por el
+          resolver local (TTL negativo de la zona, hasta 15 min). Relanza en unos minutos o vacía la caché DNS.
+      no_log: "{{ dns_client_cert is defined or dns_client_key is defined }}"

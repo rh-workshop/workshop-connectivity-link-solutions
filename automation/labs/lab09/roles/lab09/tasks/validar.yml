@@ -1,0 +1,172 @@
+---
+# Cuotas exactas en ventana limpia, claves originales y contratos Party/Accounts.
+# Gold: configuración sin límite y muestra controlada superior a premium.
+- name: Fijar la URL base de la API migrada
+  ansible.builtin.set_fact:
+    wk_api3_url: "https://{{ wk_lab_host }}/3scale"
+
+- name: Consultar la política efectiva de los planes migrados
+  kubernetes.core.k8s_info:
+    api_version: kuadrant.io/v1
+    kind: RateLimitPolicy
+    name: "bank-3scale-rl-{{ lab_id }}"
+    namespace: "{{ wk_ns_app }}"
+  register: lab09_rlp_actual
+
+- name: Comprobar planes, ventanas y contadores efectivos sin añadir un límite a gold
+  ansible.builtin.assert:
+    that:
+      - lab09_rlp_actual.resources | length == 1
+      - lab09_rlp_actual.resources[0].spec == lab09_rlp_esperada.spec
+      - lab09_rlp_actual.resources[0].status.conditions | selectattr('type', 'equalto', 'Enforced') | selectattr('status', 'equalto', 'True') | list | length == 1
+      - "'gold' not in lab09_limites"
+    fail_msg: La política efectiva no coincide con los planes y contadores por Application publicados.
+    quiet: true
+  vars:
+    lab09_rlp_esperada: "{{ lookup('ansible.builtin.template', 'rate-limit.yaml.j2') | from_yaml }}"
+
+- name: Clave básica (demuestra que rige la AuthPolicy user-key)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 9 · clave básica original"
+    http_json_contract: "{{ wk_bank_json_contract }}"
+    http_no_log: true
+    http_url: "{{ wk_api3_url }}/api/v1/party"
+    http_esperado: 200
+    http_cabeceras:
+      user-key: "k-basico-{{ lab_id }}"
+
+- name: Sin clave
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 9 · sin clave"
+    http_url: "{{ wk_api3_url }}/api/v1/party"
+    http_esperado: 401
+
+- name: Clave inválida
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 9 · clave inválida"
+    http_url: "{{ wk_api3_url }}/api/v1/party"
+    http_esperado: 401
+    http_cabeceras:
+      user-key: clave-que-no-existe
+
+- name: La ruta del Lab 4A sigue exigiendo JWT (la user-key no la abre)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 9 · /api/v1/party del Lab 4A con user-key"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 401
+    http_cabeceras:
+      user-key: "k-basico-{{ lab_id }}"
+
+- name: Plan bronze (2/min) → 429 a la tercera
+  ansible.builtin.include_tasks: plan.yml
+  vars:
+    lab09_plan: bronze
+
+- name: Básico sigue en 200 aunque bronze esté en 429 (contador por Application)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 9 · básico tras el 429 de bronze"
+    http_json_contract: "{{ wk_bank_json_contract }}"
+    http_no_log: true
+    http_url: "{{ wk_api3_url }}/api/v1/party"
+    http_esperado: 200
+    http_reintentos_prueba: 1
+    http_cabeceras:
+      user-key: "k-basico-{{ lab_id }}"
+
+- name: Plan básico (5/min) → 429 exactamente a la sexta
+  ansible.builtin.include_tasks: plan.yml
+  vars:
+    lab09_plan: basico
+
+- name: Plan silver (5/min) → 429 a la sexta
+  ansible.builtin.include_tasks: plan.yml
+  vars:
+    lab09_plan: silver
+
+# Party comprueba la clave original; Accounts inicia después una ventana limpia.
+- name: Clave premium original devuelve el Party publicado
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 9 · premium Party y clave original"
+    http_url: "{{ wk_api3_url }}/api/v1/party"
+    http_esperado: 200
+    http_no_log: true
+    http_json_contract: "{{ wk_bank_json_contract }}"
+    http_cabeceras:
+      user-key: "k-premium-{{ lab_id }}"
+
+- name: Plan premium (20/min) · veinte Accounts admitidos y 429 en la siguiente
+  ansible.builtin.include_tasks: plan.yml
+  vars:
+    lab09_plan: premium
+    lab09_url_plan: "{{ wk_api3_url }}/api/v1/accounts"
+    lab09_contrato_plan: "{{ wk_bank_accounts_json_contract }}"
+
+- name: Plan gold sin límite configurado · muestra controlada de veintiuna peticiones
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_cuota_exacta
+  vars:
+    cuota_sin_limite: true
+    cuota_muestra: 21
+    cuota_ventana_segundos: "{{ lab09_rlp_actual.resources[0].spec.limits['plan-premium'].rates[0].window[:-1] | int }}"
+    cuota_url: "{{ wk_api3_url }}/api/v1/party"
+    cuota_json_contract: "{{ wk_bank_json_contract }}"
+    cuota_cabeceras:
+      user-key: "k-gold-{{ lab_id }}"
+
+- name: Path sin mapping rule con clave válida
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 9 · /3scale/admin/audit-log (sin mapping rule)"
+    http_url: "{{ wk_api3_url }}/admin/audit-log"
+    http_esperado: 404
+    http_cabeceras:
+      user-key: "k-gold-{{ lab_id }}"
+
+- name: Leer las cabeceras de un 200 y de un 401
+  ansible.builtin.uri:
+    url: "{{ wk_api3_url }}/api/v1/party"
+    headers: "{{ item.h }}"
+    validate_certs: false
+    status_code: "{{ item.c }}"
+  loop:
+    - {h: {user-key: "k-gold-{{ lab_id }}"}, c: 200}
+    - {h: {}, c: 401}
+  loop_control:
+    label: "HTTP {{ item.c }}"
+  register: lab09_cabeceras
+
+- name: Comprobar CORS en las dos respuestas y www-authenticate en el 401
+  ansible.builtin.assert:
+    that:
+      - lab09_cabeceras.results | map(attribute='access_control_allow_origin') | list == ['*', '*']
+      - lab09_cabeceras.results[0].access_control_allow_headers == 'user-key'
+      - lab09_cabeceras.results[1].www_authenticate is search('user-key')
+    fail_msg: "Faltan cabeceras CORS o www-authenticate en las respuestas de la API migrada."
+    success_msg: "CORS estático en 200 y 401; www-authenticate user-key en el 401."
+
+- name: Resumen del Lab 9
+  ansible.builtin.debug:
+    msg: >-
+      Lab 9 OK · {{ wk_api3_url }} · 401 sin clave / clave inválida · 200 clave original con JSON Party/Accounts ·
+      bronze/básico/silver/premium con cuota exacta · gold sin límite configurado y 21 respuestas 200 · 404 sin mapping rule · CORS

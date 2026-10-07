@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab06
+  author: workshop-connectivity-link
+  description: "Lab 6 · GitOps con Argo CD: la RateLimitPolicy gestionada desde Git (commit, self-heal y revert)."
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

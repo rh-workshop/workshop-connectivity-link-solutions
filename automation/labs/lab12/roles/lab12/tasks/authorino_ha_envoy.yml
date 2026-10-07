@@ -1,0 +1,19 @@
+---
+- name: Leer estadísticas del clúster de autorización en Envoy
+  ansible.builtin.command:
+    argv: [oc, exec, -n, "{{ wk_ns_gateway }}", "deploy/{{ wk_gateway }}-{{ gateway_class }}", -c, istio-proxy, --, pilot-agent, request, GET, clusters]
+  register: lab12_ha_envoy_raw
+  changed_when: false
+
+- name: Exigir contador de consultas del clúster esperado
+  ansible.builtin.assert:
+    that:
+      - lab12_ha_envoy_raw.stdout | regex_findall('(?m)^kuadrant-auth-service::[^\n]*::rq_total::([0-9]+)$') | length > 0
+    quiet: true
+
+- name: Conservar métricas sin inferir reparto uniforme
+  ansible.builtin.set_fact:
+    lab12_ha_envoy:
+      rq_total: "{{ lab12_ha_envoy_raw.stdout | regex_findall('(?m)^kuadrant-auth-service::[^\n]*::rq_total::([0-9]+)$') | map('int') | sum }}"
+      cx_total: "{{ lab12_ha_envoy_raw.stdout | regex_findall('(?m)^kuadrant-auth-service::[^\n]*::cx_total::([0-9]+)$') | map('int') | sum }}"
+      cx_active: "{{ lab12_ha_envoy_raw.stdout | regex_findall('(?m)^kuadrant-auth-service::[^\n]*::cx_active::([0-9]+)$') | map('int') | sum }}"

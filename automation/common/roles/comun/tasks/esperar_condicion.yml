@@ -1,0 +1,43 @@
+---
+# Espera a que un recurso tenga status.conditions[type=espera_condicion] con el
+# estado indicado. Uso:
+#   - ansible.builtin.include_role:
+#       name: comun
+#       tasks_from: esperar_condicion
+#     vars:
+#       espera_api_version: kuadrant.io/v1
+#       espera_kind: TLSPolicy
+#       espera_nombre: "tls-policy-{{ lab_id }}"
+#       espera_namespace: "{{ wk_ns_gateway }}"
+#       espera_condicion: Enforced
+#       espera_estado: "True"          # opcional
+#       espera_razon: Overridden       # opcional: exige también ese reason
+- name: "Esperar {{ espera_kind }}/{{ espera_nombre }} con {{ espera_condicion }}={{ espera_estado }}"
+  block:
+    - name: "Consultar {{ espera_kind }}/{{ espera_nombre }} hasta {{ espera_condicion }}={{ espera_estado }}"
+      kubernetes.core.k8s_info:
+        api_version: "{{ espera_api_version }}"
+        kind: "{{ espera_kind }}"
+        name: "{{ espera_nombre }}"
+        namespace: "{{ espera_namespace | default(omit) }}"
+      register: comun_espera
+      vars:
+        comun_espera_conds: >-
+          {{ (comun_espera.resources | default([]) | first | default({})).status.conditions | default([])
+             | selectattr('type', 'equalto', espera_condicion)
+             | selectattr('status', 'equalto', espera_estado) | list }}
+        comun_espera_ok: >-
+          {{ (comun_espera_conds | selectattr('reason', 'defined') | selectattr('reason', 'equalto', espera_razon) | list | length > 0)
+             if espera_razon is defined else (comun_espera_conds | length > 0) }}
+      until: comun_espera_ok | bool
+      retries: "{{ espera_reintentos | default(k8s_espera_reintentos) }}"
+      delay: "{{ espera_intervalo | default(k8s_espera_intervalo) }}"
+  rescue:
+    - name: "Fallar con el estado real de {{ espera_kind }}/{{ espera_nombre }}"
+      ansible.builtin.fail:
+        msg: >-
+          {{ espera_kind }}/{{ espera_nombre }} ({{ espera_namespace | default('clúster') }}) no alcanzó
+          {{ espera_condicion }}={{ espera_estado }}{{ (' (reason ' ~ espera_razon ~ ')') if espera_razon is defined else '' }}.
+          Condiciones actuales:
+          {{ ((comun_espera.resources | default([]) | first | default({})).status | default({})).conditions
+             | default('recurso inexistente o sin condiciones') | to_json }}

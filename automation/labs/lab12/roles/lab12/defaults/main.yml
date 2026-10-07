@@ -1,0 +1,37 @@
+---
+lab12_validar: true
+# Umbral de la alerta CuotaAgotada (fracción de respuestas 429 por backend).
+lab12_umbral: 0.5
+# Validación de la alerta: genera carga que supera la cuota hasta que la regla
+# pase a este estado: pending | firing (~3-4 min).
+lab12_esperar_alerta: true
+# Inventario del Lab 8 (3/min) es la variante documentada.
+# bank es una variante explícita y no sustituye la validación del inventario.
+# El ServiceEntry del Lab 8 se exporta solo a la app y su Gateway.
+lab12_carga_ruta: inventario
+lab12_alerta_estado: firing
+lab12_alerta_rondas: 14
+# Thanos Querier de OpenShift. Vacío = Route thanos-querier y token del
+# kubeconfig activo (debe poder consultar métricas: cluster-admin lo tiene).
+lab12_thanos_url: ""
+lab12_prometheus_token: ""
+
+# --- Paso 10 · diagnóstico diag-* -------------------------------------------
+# Crea en los namespaces del participante un Gateway ClusterIP (sin ELB) y
+# cuatro políticas rotas a propósito, comprueba cada status y lo borra todo.
+# No toca a otros participantes, pero es lento: desactivado por defecto.
+lab12_diagnostico: false
+
+# --- Pasos 2, 3, 5, 6 y 7 · DEMOSTRACIONES DESTRUCTIVAS -----------------------
+# Escalan Authorino y Limitador de kuadrant-system (a 0, a 2) y mueven los
+# contadores a Redis: afectan a TODOS los participantes del clúster a la vez
+# (500 en todas las APIs mientras Authorino está a 0; cuotas sin aplicar con
+# Limitador a 0). Solo con el clúster en exclusiva o proyectando como
+# instructor. Al terminar (o si algo falla) se restaura SIEMPRE el estado
+# original de spec.replicas y spec.storage de los CR y se borra el Redis.
+lab12_demos: false
+lab12_redis_imagen: registry.redhat.io/rhel9/redis-7
+
+# Paso 11 independiente: exige playbook dedicado y clúster exclusivo.
+lab12_authorino_ha: false
+lab12_authorino_ha_exclusivo: false

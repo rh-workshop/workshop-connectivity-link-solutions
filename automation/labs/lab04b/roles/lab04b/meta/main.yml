@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab04b
+  author: workshop-connectivity-link
+  description: Lab 4B · API key en Secret, AuthPolicy de ruta, 403 por rol, cuota y restauración de JWT.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

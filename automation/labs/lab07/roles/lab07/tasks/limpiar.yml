@@ -1,0 +1,69 @@
+---
+# Limpieza del Lab 7. Orden obligatorio (el ELB y el registro público cuestan
+# dinero y ensucian la zona): DNSPolicy primero y esperar a que el DNS Operator
+# retire el DNSRecord de Route 53; luego ruta, TLSPolicy y Gateway, y esperar a
+# que desaparezca el Service LoadBalancer (libera el ELB).
+- name: Borrar la DNSPolicy de la nube
+  kubernetes.core.k8s:
+    state: absent
+    api_version: kuadrant.io/v1
+    kind: DNSPolicy
+    name: "dns-policy-cloud-{{ lab_id }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+    wait_timeout: 300
+
+- name: Esperar a que el DNS Operator retire el registro de la zona pública
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_borrado
+  vars:
+    borrado_api_version: kuadrant.io/v1alpha1
+    borrado_kind: DNSRecord
+    borrado_namespace: "{{ wk_ns_gateway }}"
+    borrado_nombre: "{{ lab07_gateway }}-https"
+
+- name: Borrar la HTTPRoute y la TLSPolicy de la nube
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ item.ns }}"
+    wait: true
+  loop:
+    - {v: gateway.networking.k8s.io/v1, k: HTTPRoute, n: "api-route-cloud-{{ lab_id }}", ns: "{{ wk_ns_app }}"}
+    - {v: kuadrant.io/v1, k: TLSPolicy, n: "tls-policy-cloud-{{ lab_id }}", ns: "{{ wk_ns_gateway }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar el Gateway de la nube
+  kubernetes.core.k8s:
+    state: absent
+    api_version: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: "{{ lab07_gateway }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+    wait_timeout: 300
+
+- name: Esperar a que desaparezca el Service LoadBalancer (libera el ELB)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_borrado
+  vars:
+    borrado_api_version: v1
+    borrado_kind: Service
+    borrado_namespace: "{{ wk_ns_gateway }}"
+    borrado_selector: "gateway.networking.k8s.io/gateway-name={{ lab07_gateway }}"
+
+- name: Borrar el Secret TLS emitido y el Secret del proveedor DNS de la nube
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: Secret
+    name: "{{ item }}"
+    namespace: "{{ wk_ns_gateway }}"
+  loop:
+    - "{{ lab07_gateway }}-tls"
+    - "{{ lab07_dns_secret }}"

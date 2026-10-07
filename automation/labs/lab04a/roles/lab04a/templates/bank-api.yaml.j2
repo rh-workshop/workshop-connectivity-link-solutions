@@ -1,0 +1,79 @@
+# Backend del Lab 4 (https://rh-workshop.github.io/workshop-connectivity-link/lab4.html):
+# app HTTP simple sin imagen privada. Tres endpoints estilo Open Banking UK:
+#   GET /api/v1/party · GET /api/v1/accounts · GET /admin/audit-log (solo rol admin,
+#   lo decide la AuthPolicy, no el backend).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bank-api
+  namespace: {{ wk_ns_app }}
+  labels:
+    app: bank-api
+    workshop.user: {{ lab_id }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bank-api
+  template:
+    metadata:
+      labels:
+        app: bank-api
+    spec:
+      containers:
+        - name: api
+          image: {{ lab04a_imagen }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              cat > /tmp/server.py <<'PY'
+              from http.server import BaseHTTPRequestHandler, HTTPServer
+              import json
+              ROUTES = {
+                  "/api/v1/party": {"Data": {"Party": {"PartyId": "CL-BANK-DEMO",
+                      "name": "Backend de demo via Connectivity Link"}}},
+                  "/api/v1/accounts": {"Data": {"Account": [{"AccountId": "ACC-DEMO-001",
+                      "Currency": "EUR", "Nickname": "Demo Savings"}]}},
+                  "/admin/audit-log": {"Data": {"AuditLog": [{"Event": "AccountRead",
+                      "Actor": "ACC-DEMO-001", "Timestamp": "2026-01-01T00:00:00Z"}]}},
+              }
+              class H(BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      body = ROUTES.get(self.path.split("?")[0])
+                      code = 200 if body else 404
+                      payload = json.dumps(body if body else {"error": "NotFound"}).encode()
+                      self.send_response(code)
+                      self.send_header("Content-Type", "application/json")
+                      self.end_headers()
+                      self.wfile.write(payload)
+              HTTPServer(("0.0.0.0", 8080), H).serve_forever()
+              PY
+              python /tmp/server.py
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bank-api
+  namespace: {{ wk_ns_app }}
+  labels:
+    app: bank-api
+    workshop.user: {{ lab_id }}
+spec:
+  type: ClusterIP
+  selector:
+    app: bank-api
+  ports:
+    - name: http
+      # Service bank-api:8080 — coincide con el backendRef de la HTTPRoute.
+      port: 8080
+      targetPort: http

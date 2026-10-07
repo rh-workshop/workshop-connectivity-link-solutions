@@ -1,0 +1,39 @@
+---
+# Slice del participante: lo que bootstrap-users.sh crea para cada userX.
+# Server-side apply con field manager propio: solo gestiona los campos que
+# declara y es idempotente (segunda ejecución = sin cambios).
+
+- name: Crear namespaces, cuota y LimitRange del participante
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    definition: "{{ item }}"
+  loop: "{{ lookup('ansible.builtin.template', 'namespaces.yaml.j2') | from_yaml_all | select | list }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }} {{ item.metadata.namespace | default('') }}"
+
+- name: Enlazar los permisos del taller al usuario del participante
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    definition: "{{ item }}"
+  loop: "{{ lookup('ansible.builtin.template', 'rbac.yaml.j2') | from_yaml_all | select | list }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }} {{ item.metadata.namespace | default('') }}"
+  when: tenant_rbac_usuario | bool
+  tags: [tenant_rbac]
+
+- name: Preparar el Secret del proveedor DNS en el namespace del Gateway
+  ansible.builtin.import_tasks: dns_secret.yml
+  when:
+    - entrada_modo == 'loadbalancer'
+    - dns_policy_habilitada | bool
+
+- name: Validar el slice del participante
+  ansible.builtin.import_tasks: validar.yml
+  when: tenant_validar | bool
+  tags: [validar]

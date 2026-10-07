@@ -1,0 +1,122 @@
+---
+# Realm realm-<N> del participante. Se crea por la API de administración de
+# Keycloak (community.general.keycloak_*) autenticando en el realm master.
+
+- name: Comprobar que Keycloak está localizado
+  ansible.builtin.assert:
+    that: wk_keycloak_host | length > 0
+    fail_msg: "No se encontró Keycloak: define keycloak_host o crea el CR Keycloak ({{ keycloak_namespace }}/{{ keycloak_cr_nombre }})."
+    quiet: true
+
+- name: Resolver las credenciales del admin de Keycloak
+  ansible.builtin.import_tasks: credenciales.yml
+
+- name: Configurar el realm del participante
+  module_defaults:
+    group/community.general.keycloak:
+      auth_keycloak_url: "{{ wk_keycloak_url }}"
+      auth_realm: "{{ keycloak_admin_realm }}"
+      auth_username: "{{ wk_kc_admin_usuario }}"
+      auth_password: "{{ wk_kc_admin_password }}"
+      validate_certs: "{{ keycloak_validate_certs }}"
+  block:
+    - name: "Crear el realm {{ wk_realm }}"
+      community.general.keycloak_realm:
+        id: "{{ wk_realm }}"
+        realm: "{{ wk_realm }}"
+        enabled: true
+        state: present
+      register: kc_realm
+
+    # Keycloak materializa atributos por defecto (clientSessionIdleTimeout,
+    # scimApiEnabled…) en la PRIMERA actualización tras crear el realm. Sin esta
+    # pasada, la siguiente ejecución del playbook reportaría un cambio espurio.
+    - name: "Normalizar el realm recién creado {{ wk_realm }}"
+      community.general.keycloak_realm:
+        id: "{{ wk_realm }}"
+        realm: "{{ wk_realm }}"
+        enabled: true
+        state: present
+      changed_when: false
+      when: kc_realm is changed
+
+    - name: Crear los roles del realm
+      community.general.keycloak_role:
+        realm: "{{ wk_realm }}"
+        name: "{{ item }}"
+        state: present
+      loop: "{{ keycloak_roles_realm }}"
+
+    - name: Crear los client scopes de operación (Lab 10 · máquina a máquina)
+      community.general.keycloak_clientscope:
+        realm: "{{ wk_realm }}"
+        name: "{{ item }}"
+        protocol: openid-connect
+        attributes:
+          include.in.token.scope: "true"
+          display.on.consent.screen: "false"
+        state: present
+      loop: "{{ keycloak_client_scopes }}"
+
+    - name: Crear el cliente público connectivity-link (password grant)
+      community.general.keycloak_client:
+        realm: "{{ wk_realm }}"
+        client_id: connectivity-link
+        enabled: true
+        public_client: true
+        direct_access_grants_enabled: true
+        standard_flow_enabled: true
+        redirect_uris: ["*"]
+        web_origins: ["*"]
+        state: present
+
+    - name: Crear el cliente confidencial bank-m2m (client_credentials)
+      community.general.keycloak_client:
+        realm: "{{ wk_realm }}"
+        client_id: bank-m2m
+        name: Sistema socio (máquina a máquina)
+        enabled: true
+        public_client: false
+        service_accounts_enabled: true
+        standard_flow_enabled: false
+        direct_access_grants_enabled: false
+        default_client_scopes: ["bank:read", "email", "profile"]
+        optional_client_scopes: ["bank:write"]
+        client_scopes_behavior: patch
+        state: present
+
+    - name: Crear los usuarios de demostración
+      community.general.keycloak_user:
+        realm: "{{ wk_realm }}"
+        username: "{{ item.username }}"
+        email: "{{ item.email }}"
+        first_name: "{{ item.first_name }}"
+        last_name: "{{ item.last_name }}"
+        email_verified: true
+        enabled: true
+        state: present
+      loop: "{{ keycloak_usuarios }}"
+      loop_control:
+        label: "{{ item.username }}"
+
+    - name: Asignar los roles de realm a cada usuario
+      community.general.keycloak_user_rolemapping:
+        realm: "{{ wk_realm }}"
+        target_username: "{{ item.username }}"
+        roles: "{{ item.roles | map('community.general.dict_kv', 'name') | list }}"
+        state: present
+      loop: "{{ keycloak_usuarios }}"
+      loop_control:
+        label: "{{ item.username }} → {{ item.roles | join(', ') }}"
+
+    - name: Fijar la contraseña solo a los usuarios que aún no pueden iniciar sesión
+      ansible.builtin.include_tasks: password.yml
+      loop: "{{ keycloak_usuarios }}"
+      loop_control:
+        loop_var: kc_usuario
+        label: "{{ kc_usuario.username }}"
+
+- name: Validar el realm (discovery OIDC y tokens)
+  ansible.builtin.import_tasks: validar.yml
+  when: keycloak_realm_validar | bool
+  tags: [validar]

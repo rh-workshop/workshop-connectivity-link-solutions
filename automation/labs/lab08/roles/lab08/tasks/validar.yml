@@ -1,0 +1,160 @@
+---
+# «Comprueba el resultado» del Lab 8: 401 sin token, 403 alice sin el rol,
+# 200 bob, respuesta del servicio externo (reescritura y sin Authorization),
+# 200 alice tras asignarle el rol, cuota propia y bank-api intacto.
+- name: Fijar la URL del inventario
+  ansible.builtin.set_fact:
+    wk_inv_url: "https://{{ wk_lab_host }}/inventario/items"
+
+- name: Inventario sin token
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 8 · inventario sin token"
+    http_url: "{{ wk_inv_url }}"
+    http_esperado: 401
+
+- name: Pedir el token de bob (rol inventario)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: bob
+
+- name: Guardar el token de bob
+  ansible.builtin.set_fact:
+    lab08_token_bob: "{{ wk_token }}"
+  no_log: true
+
+- name: Inventario con el token de bob
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 8 · bob (rol inventario) en el inventario"
+    http_url: "{{ wk_inv_url }}"
+    http_esperado: 200
+    http_no_log: true
+    http_cabeceras:
+      Authorization: "Bearer {{ lab08_token_bob }}"
+    http_json_contract:
+      - {path: path, equals: /v1/items}
+      - {path: authorization_recibida, equals: false}
+      # Se acepta el puerto HTTPS explícito, nunca una coincidencia parcial.
+      - path: "contains(['{{ wk_lab_host }}', '{{ wk_lab_host }}:443'], host_header)"
+        equals: true
+
+- name: Pedir el token de alice (solo rol customer)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: alice
+
+- name: Inventario con alice sin el rol
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 8 · alice sin rol inventario"
+    http_url: "{{ wk_inv_url }}"
+    http_esperado: 403
+    http_no_log: true
+    http_cabeceras:
+      Authorization: "Bearer {{ wk_token }}"
+
+- name: Registrar propiedad temporal y validar alice con el rol inventario
+  block:
+    - name: Registrar la asignación temporal antes de concederla
+      ansible.builtin.include_tasks: marcar_rol.yml
+
+    - name: Asignar el rol inventario a alice
+      ansible.builtin.include_tasks: rol_alice.yml
+      vars:
+        lab08_rol_estado: present
+
+    - name: Pedir un token NUEVO de alice (el anterior no trae el rol)
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: alice
+
+    - name: Guardar el token nuevo de alice
+      ansible.builtin.set_fact:
+        lab08_token_alice: "{{ wk_token }}"
+      no_log: true
+
+    - name: Inventario con alice y el rol asignado
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_http
+      vars:
+        http_prueba: "Lab 8 · alice con rol inventario (si hay 429 previo, espera a la nueva ventana)"
+        http_url: "{{ wk_inv_url }}"
+        http_esperado: 200
+        http_no_log: true
+        http_cabeceras:
+          Authorization: "Bearer {{ lab08_token_alice }}"
+
+    - name: Comprobar la cuota exacta del inventario en una ventana limpia
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_cuota_exacta
+      vars:
+        cuota_url: "{{ wk_inv_url }}"
+        cuota_limite: "{{ lab08_cuota }}"
+        cuota_ventana_segundos: 60
+        cuota_json_contract:
+          - {path: path, equals: /v1/items}
+          - {path: authorization_recibida, equals: false}
+          - path: "contains(['{{ wk_lab_host }}', '{{ wk_lab_host }}:443'], host_header)"
+            equals: true
+        cuota_cabeceras:
+          Authorization: "Bearer {{ lab08_token_alice }}"
+
+    - name: bank-api sigue respondiendo con el mismo token (cuota independiente)
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_http
+      vars:
+        http_prueba: "Lab 8 · alice en bank-api tras agotar el inventario"
+        http_json_contract: "{{ wk_bank_json_contract }}"
+        http_url: "{{ wk_api_url }}"
+        http_esperado: 200
+        http_no_log: true
+        http_cabeceras:
+          Authorization: "Bearer {{ lab08_token_alice }}"
+  always:
+    - name: Retirar el rol inventario a alice (estado de partida del realm)
+      when: lab08_restaurar_rol | bool
+      block:
+        - name: Retirar únicamente la asignación registrada por este laboratorio
+          ansible.builtin.include_tasks: restaurar_rol.yml
+
+        - name: Pedir otro token de alice sin el rol
+          ansible.builtin.include_role:
+            name: comun
+            tasks_from: token_keycloak
+          vars:
+            token_usuario: alice
+
+        - name: Alice vuelve a recibir 403 en el inventario
+          ansible.builtin.include_role:
+            name: comun
+            tasks_from: probar_http
+          vars:
+            http_prueba: "Lab 8 · alice tras retirar el rol"
+            http_url: "{{ wk_inv_url }}"
+            http_esperado: 403
+            http_no_log: true
+            http_cabeceras:
+              Authorization: "Bearer {{ wk_token }}"
+
+- name: Resumen del Lab 8
+  ansible.builtin.debug:
+    msg: >-
+      Lab 8 OK · {{ wk_inv_url }} → {{ lab08_ext_host }}:{{ lab08_ext_port }} · 401 sin token · 200 bob ·
+      path /v1/items sin Authorization · 403 alice sin rol · 200 alice con rol · 429 a la
+      {{ cuota_exacta_codigos | length }}.ª tras {{ lab08_cuota }} respuestas 200 · bank-api 200

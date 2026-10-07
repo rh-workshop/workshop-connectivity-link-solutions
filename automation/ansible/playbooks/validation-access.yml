@@ -1,0 +1,9 @@
+---
+# Configura acceso sólo con opt-in; no solicita ni persiste tokens.
+- name: Acceso temporal de validación de monitorización
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: validation_access

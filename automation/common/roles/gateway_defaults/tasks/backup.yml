@@ -1,0 +1,32 @@
+---
+- name: Crear carpeta privada para el respaldo
+  ansible.builtin.file:
+    path: "{{ gateway_defaults_backup_dir }}"
+    state: directory
+    mode: '0700'
+
+- name: Rechazar respaldo dentro de un repositorio Git
+  ansible.builtin.command:
+    argv: [git, -C, "{{ gateway_defaults_backup_dir }}", rev-parse, --show-toplevel]
+  register: gateway_defaults_backup_git
+  changed_when: false
+  failed_when: gateway_defaults_backup_git.rc != 128
+
+- name: Reservar un directorio nuevo para no sobrescribir evidencia
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ gateway_defaults_backup_dir }}"
+    prefix: before-apply-
+  register: gateway_defaults_backup_run
+
+- name: Guardar el ConfigMap previo o su ausencia y el inventario de Gateways
+  ansible.builtin.copy:
+    dest: "{{ gateway_defaults_backup_run.path }}/{{ item.name }}.json"
+    content: "{{ item.value | to_nice_json }}"
+    mode: '0600'
+  loop:
+    - name: configmap-before
+      value: "{{ gateway_defaults_named.resources }}"
+    - name: gateways-before
+      value: "{{ gateway_defaults_gateways.resources }}"
+  no_log: true

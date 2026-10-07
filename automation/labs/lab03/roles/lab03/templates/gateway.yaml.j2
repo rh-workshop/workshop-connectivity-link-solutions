@@ -1,0 +1,34 @@
+# Gateway HTTPS del participante {{ lab_id }} (https://rh-workshop.github.io/workshop-connectivity-link/lab3.html).
+# allowedRoutes restringe HTTPRoutes a namespaces con label gateway-tenant={{ lab_id }}.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ wk_gateway }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+spec:
+  # Clase preparada por el instructor: istio (setup OSSM) u openshift-default.
+  gatewayClassName: {{ gateway_class }}
+{% if aws_gateway_subnets_override | default(false) and aws_load_balancer_subnet_ids | default([]) | length > 0 %}
+  infrastructure:
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-subnets: "{{ aws_load_balancer_subnet_ids | join(',') }}"
+{% endif %}
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ wk_lab_host }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ wk_gateway }}-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-tenant: {{ lab_id }}

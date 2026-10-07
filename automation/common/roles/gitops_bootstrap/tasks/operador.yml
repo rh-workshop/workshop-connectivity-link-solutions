@@ -1,0 +1,57 @@
+---
+- name: Validar el modo de gestión antes del bootstrap explícito
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: false
+
+# La búsqueda global evita instalar por segunda vez un operador ya existente
+# en openshift-operators aunque el perfil use otro namespace por defecto.
+- name: Buscar la Subscription GitOps existente en todo el clúster
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+  register: gitops_bootstrap_subs
+
+- name: Seleccionar las Subscriptions del paquete GitOps
+  ansible.builtin.set_fact:
+    gitops_bootstrap_subs_paquete: >-
+      {{ gitops_bootstrap_subs.resources
+         | selectattr('spec.name', 'equalto', gitops_bootstrap_operador.nombre) | list }}
+
+- name: Rechazar instalaciones duplicadas del operador GitOps
+  ansible.builtin.assert:
+    that: gitops_bootstrap_subs_paquete | length <= 1
+    fail_msg: Hay varias Subscriptions GitOps; resuelve la propiedad antes de continuar.
+    quiet: true
+
+- name: Conservar el namespace del operador que ya está instalado
+  ansible.builtin.set_fact:
+    gitops_bootstrap_namespace_efectivo: >-
+      {{ gitops_bootstrap_subs_paquete[0].metadata.namespace if gitops_bootstrap_subs_paquete | length > 0
+         else gitops_bootstrap_operador.namespace }}
+
+- name: Instalar GitOps únicamente mediante bootstrap explícito
+  ansible.builtin.include_tasks: instalar.yml
+  when:
+    - not gitops_bootstrap_verificar_solo | bool
+    - gitops_bootstrap_subs_paquete | length == 0
+
+- name: Esperar al CSV del operador GitOps
+  ansible.builtin.include_role:
+    name: plataforma
+    tasks_from: esperar_csv
+  vars:
+    csv_namespace: "{{ gitops_bootstrap_namespace_efectivo }}"
+    csv_prefijo: "{{ gitops_bootstrap_operador.csv_prefijo }}"
+
+- name: Esperar a la API ArgoCD antes de consultar la instancia
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apiextensions.k8s.io/v1
+    espera_kind: CustomResourceDefinition
+    espera_nombre: argocds.argoproj.io
+    espera_condicion: Established

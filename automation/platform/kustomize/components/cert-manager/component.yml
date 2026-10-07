@@ -1,0 +1,5 @@
+phase: cert-manager
+source: canonical_ansible_templates
+generated_resource: manifests.yaml
+sync: manual
+gate: cd automation/ansible && ansible-playbook playbooks/platform-gate.yml -e platform_gate_phase=cert-manager

@@ -1,0 +1,13 @@
+---
+lab08_validar: true
+# Servicio externo (salida de OpenTofu de automation/labs/lab08/opentofu):
+#   -e lab08_ext_host=$(tofu -chdir=automation/labs/lab08/opentofu output -raw api_public_dns)
+# Si no se pasan, se toman de las variables de entorno EXT_HOST / EXT_PORT.
+lab08_ext_host: "{{ lookup('ansible.builtin.env', 'EXT_HOST') }}"
+lab08_ext_port: "{{ lookup('ansible.builtin.env', 'EXT_PORT') | default('8080', true) | int }}"
+# Cuota propia del inventario (peticiones por minuto e identidad).
+lab08_cuota: 3
+# La validación asigna el rol «inventario» a alice para mostrar el paso de 403
+# a 200. Con true (por defecto) se le retira al terminar: el realm vuelve al
+# estado que esperan los demás labs (alice solo con «customer»).
+lab08_restaurar_rol: true

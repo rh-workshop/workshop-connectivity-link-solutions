@@ -1,0 +1,150 @@
+---
+# Pasos 8 y 9 del lab por participante: permiso para crear la regla, regla
+# cargada en Thanos Ruler, consultas PromQL por ruta y (opcional) la alerta
+# CuotaAgotada en pending/firing generando 429 (bank-api o /inventario).
+- name: Fijar la URL del inventario
+  ansible.builtin.set_fact:
+    wk_inv_url: "https://{{ wk_lab_host }}/inventario/items"
+
+- name: Exigir una variante de tráfico conocida
+  ansible.builtin.assert:
+    that: lab12_carga_ruta in ['bank', 'inventario']
+    quiet: true
+
+- name: Leer el hostname externo del inventario cuando se valida la variante del Lab 8
+  kubernetes.core.k8s_info:
+    api_version: networking.istio.io/v1
+    kind: ServiceEntry
+    name: inventario-externo
+    namespace: "{{ wk_ns_app }}"
+  register: lab12_serviceentry
+  when: lab12_carga_ruta == 'inventario'
+
+- name: Identificar el backend real de la variante seleccionada
+  ansible.builtin.set_fact:
+    lab12_backend: "{{ 'bank-api' if lab12_carga_ruta == 'bank' else lab12_serviceentry.resources[0].spec.hosts[0] }}"
+
+- name: «oc auth can-i create prometheusrules» como el participante
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: authorization.k8s.io/v1
+      kind: SubjectAccessReview
+      spec:
+        user: "{{ lab_id }}"
+        resourceAttributes:
+          group: monitoring.coreos.com
+          resource: prometheusrules
+          verb: create
+          namespace: "{{ wk_ns_gateway }}"
+  register: lab12_sar
+  changed_when: false
+  when: tenant_rbac_usuario | default(true) | bool
+
+- name: Comprobar que el participante puede crear la regla en su namespace de Gateway
+  ansible.builtin.assert:
+    that: lab12_sar.result.status.allowed | default(false)
+    fail_msg: "{{ lab_id }} no puede crear PrometheusRule en {{ wk_ns_gateway }}: falta el RoleBinding monitoring-rules-edit."
+    success_msg: "oc auth can-i create prometheusrules -n {{ wk_ns_gateway }} --as={{ lab_id }} → yes"
+  when: tenant_rbac_usuario | default(true) | bool
+
+- name: Preparar la consulta a Thanos
+  ansible.builtin.include_tasks: thanos.yml
+
+- name: Esperar a que Thanos Ruler cargue la regla CuotaAgotada
+  block:
+    - name: Consultar las reglas de alerta cargadas
+      ansible.builtin.uri:
+        url: "{{ wk_thanos_url }}/api/v1/rules?type=alert"
+        headers:
+          Authorization: "Bearer {{ wk_thanos_token }}"
+        validate_certs: false
+        status_code: 200
+      register: lab12_reglas
+      until: lab12_regla | length > 0 and (lab12_regla | first).health == 'ok'
+      retries: 36
+      delay: 10
+      vars:
+        lab12_regla: >-
+          {{ lab12_reglas.json.data.groups | default([]) | selectattr('name', 'equalto', 'api-' ~ lab_id)
+             | map(attribute='rules') | flatten | selectattr('name', 'equalto', 'CuotaAgotada') | list }}
+      no_log: true
+  rescue:
+    - name: Fallar si la regla no se carga
+      ansible.builtin.fail:
+        msg: >-
+          Thanos Ruler no cargó el grupo api-{{ lab_id }} en 6 minutos. Comprueba que UWM está activo
+          (openshift-user-workload-monitoring) y la PrometheusRule api-429-{{ lab_id }}.
+
+- name: Pedir el token para generar tráfico
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: "{{ 'bob' if lab12_carga_ruta == 'inventario' else 'alice' }}"
+
+- name: Generar tráfico con 200 y 429
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_serie
+  vars:
+    serie_prueba: "Lab 12 · tráfico para las métricas ({{ lab12_carga_ruta }})"
+    serie_url: "{{ wk_inv_url if lab12_carga_ruta == 'inventario' else wk_api_url }}"
+    serie_n: 10
+    serie_cabeceras:
+      Authorization: "Bearer {{ wk_token }}"
+
+- name: Peticiones por segundo por backend y código
+  ansible.builtin.include_tasks: promql.yml
+  vars:
+    promql_nombre: "tasa por backend y código en {{ wk_ns_app }}"
+    promql_codigos: true
+    promql_consulta: >-
+      sum by (destination_service_name, response_code)
+      (rate(istio_requests_total{destination_service_namespace="{{ wk_ns_app }}"}[5m]))
+
+- name: Rondas de tráfico hasta que la fracción de 429 por backend sea > 0 (lo que evalúa la alerta)
+  ansible.builtin.include_tasks: ronda_429.yml
+  loop: "{{ range(12) | list }}"
+  loop_control:
+    loop_var: lab12_ronda
+
+- name: Comprobar que los 429 aparecen en las métricas
+  ansible.builtin.assert:
+    that: lab12_429_ok | default(false) | bool
+    fail_msg: "Ningún backend de {{ wk_ns_app }} registra 429 en los últimos 5 minutos."
+    success_msg: "Fracción de 429 por backend: {{ lab12_429_series }}"
+
+- name: Rechazos de políticas frente a errores del backend
+  ansible.builtin.include_tasks: promql.yml
+  vars:
+    promql_nombre: "401/403/5xx por backend (15 min)"
+    promql_codigos: true
+    promql_consulta: >-
+      sum by (destination_service_name, response_code)
+      (increase(istio_requests_total{destination_service_namespace="{{ wk_ns_app }}", response_code=~"401|403|5.."}[15m]))
+
+- name: Disparar la alerta CuotaAgotada con carga sostenida
+  when: lab12_esperar_alerta | bool
+  block:
+    - name: Rondas de carga hasta que la alerta llegue al estado pedido
+      ansible.builtin.include_tasks: carga_alerta.yml
+      loop: "{{ range(lab12_alerta_rondas | int) | list }}"
+      loop_control:
+        loop_var: lab12_ronda
+
+    - name: Comprobar el estado de la alerta
+      ansible.builtin.assert:
+        that:
+          - lab12_alerta_ok | default(false) | bool
+          - lab12_alerta_etiquetas.destination_service_name | default('') == lab12_backend
+        fail_msg: >-
+          CuotaAgotada no llegó a {{ lab12_alerta_estado }} tras {{ lab12_alerta_rondas }} rondas de carga
+          (último estado: {{ lab12_alerta_ultimo | default('?') }}).
+        success_msg: "CuotaAgotada en {{ lab12_alerta_ultimo }} ({{ lab12_alerta_etiquetas | default({}) }})."
+
+- name: Resumen del Lab 12
+  ansible.builtin.debug:
+    msg: >-
+      Lab 12 OK · variante {{ lab12_carga_ruta }} / backend {{ lab12_backend }} · PrometheusRule api-429-{{ lab_id }} en {{ wk_ns_gateway }} cargada · PromQL por ruta con series ·
+      alerta {{ lab12_alerta_ultimo | default('no comprobada') }} · diagnóstico/demos no comprobados por este validador (se ejecutan después si se habilitan)

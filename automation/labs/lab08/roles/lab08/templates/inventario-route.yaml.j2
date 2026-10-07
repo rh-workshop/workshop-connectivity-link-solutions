@@ -1,0 +1,50 @@
+# Lab 8 · paso 3: alias DNS del servicio externo y ruta /inventario.
+# La ruta reescribe /inventario → /v1 y quita Authorization: el JWT no sale del clúster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventario-externo
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  type: ExternalName
+  externalName: {{ lab08_ext_host }}
+  ports:
+    - name: http
+      port: {{ lab08_ext_port }}
+      protocol: TCP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: inventario-route-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ wk_gateway }}
+      namespace: {{ wk_ns_gateway }}
+  hostnames:
+    - {{ wk_lab_host }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /inventario
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /v1
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove:
+              - Authorization
+      backendRefs:
+        - name: inventario-externo
+          port: {{ lab08_ext_port }}

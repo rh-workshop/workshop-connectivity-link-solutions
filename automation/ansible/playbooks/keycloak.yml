@@ -1,0 +1,11 @@
+---
+# Realm OIDC del participante (realm-<N>) con usuarios alice/bob y clientes.
+#   ansible-playbook playbooks/keycloak.yml -e lab_id=user7
+- name: Keycloak · realm del participante
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: keycloak_realm
+      tags: [keycloak]

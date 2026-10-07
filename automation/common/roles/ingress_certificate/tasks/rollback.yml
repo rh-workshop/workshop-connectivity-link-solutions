@@ -1,0 +1,26 @@
+---
+- name: Construir un rollback limitado al campo respaldado y al clúster original
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ role_path }}/files/ingress_tls.py"
+      - rollback
+      - --backup
+      - "{{ ingress_certificate_backup }}"
+      - --domain
+      - "{{ ingress_domain }}"
+      - --cluster-uid
+      - "{{ ingress_tls_uid }}"
+    stdin: "{{ ingress_tls_controller.resources[0] | to_json }}"
+  register: ingress_tls_rollback
+  changed_when: false
+  no_log: true
+
+- name: Restaurar el campo original o su ausencia mediante JSON Patch
+  kubernetes.core.k8s_json_patch:
+    api_version: operator.openshift.io/v1
+    kind: IngressController
+    name: default
+    namespace: openshift-ingress-operator
+    patch: "{{ ingress_tls_rollback.stdout | from_json }}"
+  when: ingress_tls_rollback.stdout | from_json | length > 0

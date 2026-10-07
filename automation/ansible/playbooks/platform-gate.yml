@@ -1,0 +1,11 @@
+---
+# Consultas de readiness entre syncs manuales. Ingress-reference es una transición
+# explícita: requiere platform_gate_allow_reference_change y backup privado TLS.
+- name: Plataforma · gates nativos antes de avanzar a la siguiente fase
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: platform_gate
+      tags: [platform_gate]

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ wk_platform_argocd.namespace }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.component: platform-argocd
+---
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: {{ wk_platform_argocd.name }}
+  namespace: {{ wk_platform_argocd.namespace }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.component: platform-argocd
+spec:
+  defaultClusterScopedRoleDisabled: true
+  controller:
+    respectRBAC: normal
+  extraConfig:
+    application.resourceTrackingMethod: annotation

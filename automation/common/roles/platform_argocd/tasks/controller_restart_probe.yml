@@ -1,0 +1,40 @@
+---
+- name: Comprobar revisión y pods en el mismo intento de lectura
+  when: not platform_argocd_restart_done | bool
+  block:
+    - name: Esperar entre intentos sin repetir ninguna escritura
+      ansible.builtin.pause:
+        seconds: "{{ k8s_espera_intervalo }}"
+      when: platform_argocd_restart_attempt | int > 0
+
+    - name: Releer StatefulSet dedicado
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: StatefulSet
+        namespace: "{{ wk_platform_argocd.namespace }}"
+        name: "{{ wk_platform_argocd.name }}-application-controller"
+      register: platform_argocd_restart_ready_sts
+
+    - name: Releer pods del StatefulSet dedicado
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ wk_platform_argocd.namespace }}"
+        label_selectors: "{{ platform_argocd_restart_selector }}"
+      register: platform_argocd_restart_ready_pods
+
+    - name: Evaluar convergencia con la revisión recién leída
+      ansible.builtin.set_fact:
+        platform_argocd_restart_done: >-
+          {{ platform_argocd_restart_ready_sts.resources | length == 1 and
+          platform_argocd_restart_ready_sts.resources[0].metadata.uid == platform_argocd_restart_original.metadata.uid and
+          platform_argocd_restart_ready_sts.resources[0].status.observedGeneration | default(0) | int == platform_argocd_restart_ready_sts.resources[0].metadata.generation | int and
+          platform_argocd_restart_ready_sts.resources[0].status.currentRevision | default('') == platform_argocd_restart_ready_sts.resources[0].status.updateRevision | default('missing') and
+          platform_argocd_restart_ready_sts.resources[0].status.readyReplicas | default(0) | int == platform_argocd_restart_original.spec.replicas | int and
+          platform_argocd_restart_ready_sts.resources[0].status.updatedReplicas | default(0) | int == platform_argocd_restart_original.spec.replicas | int and
+          platform_argocd_restart_ready_sts.resources[0].status.currentReplicas | default(0) | int == platform_argocd_restart_original.spec.replicas | int and
+          platform_argocd_restart_ready_pods.resources | length == platform_argocd_restart_original.spec.replicas | int and
+          platform_argocd_restart_ready_pods.resources | map(attribute='metadata.uid') | intersect(platform_argocd_restart_old_pods.resources | map(attribute='metadata.uid') | list) | length == 0 and
+          platform_argocd_restart_ready_pods.resources | selectattr('spec.serviceAccountName', 'equalto', wk_platform_argocd.service_account) | list | length == platform_argocd_restart_original.spec.replicas | int and
+          platform_argocd_restart_ready_pods.resources | map(attribute='status.conditions') | flatten | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == platform_argocd_restart_original.spec.replicas | int and
+          platform_argocd_restart_ready_pods.resources | community.general.json_query('[].metadata.labels."controller-revision-hash"') | unique | list == [platform_argocd_restart_ready_sts.resources[0].status.updateRevision] }}

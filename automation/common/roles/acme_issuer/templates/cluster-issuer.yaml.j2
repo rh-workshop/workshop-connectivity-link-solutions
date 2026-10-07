@@ -1,0 +1,36 @@
+# Fuente pública canónica; GitOps puede consumirla sin credenciales.
+apiVersion: cert-manager.io/v1
+kind: {{ acme_issuer_kind | to_json }}
+metadata:
+  name: {{ acme_issuer_nombre | to_json }}
+{% if acme_issuer_kind == 'Issuer' %}
+  namespace: {{ acme_issuer_namespace | to_json }}
+{% endif %}
+  labels:
+    workshop.module: connectivity-link
+    workshop.component: acme-issuer
+{% if acme_issuer_participant_mode | default(false) %}
+    workshop.user: {{ lab_id | to_json }}
+{% endif %}
+spec:
+  acme:
+{% if acme_email | default('') | length > 0 %}
+    email: {{ acme_email | to_json }}
+{% endif %}
+    server: {{ acme_servidor | to_json }}
+    privateKeySecretRef:
+      name: {{ acme_cuenta_secret | to_json }}
+    solvers:
+      - selector:
+          dnsZones:
+            - {{ acme_dns_zone | to_json }}
+        dns01:
+          route53:
+            region: {{ acme_route53_region | to_json }}
+            hostedZoneID: {{ acme_route53_hosted_zone_id | to_json }}
+            accessKeyIDSecretRef:
+              name: {{ acme_secret_nombre | to_json }}
+              key: AWS_ACCESS_KEY_ID
+            secretAccessKeySecretRef:
+              name: {{ acme_secret_nombre | to_json }}
+              key: AWS_SECRET_ACCESS_KEY

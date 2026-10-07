@@ -1,0 +1,27 @@
+---
+lab10_validar: true
+# Imagen de los backends gobierno-api-v1/v2 (la del heredoc del lab).
+lab10_imagen: registry.redhat.io/ubi9/python-311
+# Techo del Gateway (overrides) y cuota «laxa» del desarrollador en la ruta.
+lab10_techo: 2
+lab10_cuota_ruta: 100
+# Reparto canary: pesos de v1 y v2 en la regla por defecto.
+lab10_peso_v1: 90
+lab10_peso_v2: 10
+# Validación del 90/10: tamaño de la muestra y tolerancia del porcentaje de v2.
+# Con 50 peticiones, P(0 de v2) ≈ 0,5 %; el rango 2–30 % cubre > 99 % de los casos.
+lab10_canary_muestra: 50
+lab10_canary_min_pct: 2
+lab10_canary_max_pct: 30
+# Fecha de retirada que anuncia v1 (cabecera Sunset, RFC 8594).
+lab10_sunset: "Wed, 31 Mar 2027 23:59:59 GMT"
+# Contrato del eco publicado; se aplica a respuestas ya obtenidas, sin otra petición.
+lab10_http_contract:
+  - {path: service, equals: gobierno-api}
+  - {path: method, equals: "{{ lab10_contrato_metodo | default('GET') }}"}
+  - {path: path, equals: /gobierno/v1/saldo}
+  - {path: "contains(['v1', 'v2'], version)", equals: true}
+  - path: >-
+      (version == 'v1' && balance == '1250.40 EUR' && saldo == `null`) ||
+      (version == 'v2' && balance == `null` && saldo == `{"cuenta":"ACC-DEMO-001","moneda":"EUR","disponible":1250.40}`)
+    equals: true

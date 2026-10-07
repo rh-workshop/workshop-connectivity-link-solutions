@@ -1,0 +1,76 @@
+---
+# Una ventana completa sin tráfico de la misma identidad, seguida de límite+1
+# peticiones. No deduce el límite únicamente de que aparezca algún 429.
+# vars: cuota_url, cuota_cabeceras, cuota_limite, cuota_ventana_segundos (60),
+#       cuota_json_contract opcional; los 200 se comprueban sin repetir peticiones.
+#       cuota_sin_limite=true exige cuota_muestra; solo prueba esa muestra finita.
+- name: Exigir parámetros de una cuota exacta verificable
+  ansible.builtin.assert:
+    that:
+      - cuota_sin_limite | default(false) | type_debug == 'bool'
+      - (cuota_muestra if cuota_sin_limite | default(false) else cuota_limite) | int > 0
+      - (cuota_muestra if cuota_sin_limite | default(false) else cuota_limite) | int | string == (cuota_muestra if cuota_sin_limite | default(false) else cuota_limite) | string
+      - cuota_ventana_segundos | default(60) | int > 0
+      - cuota_ventana_segundos | default(60) | int | string == cuota_ventana_segundos | default(60) | string
+    fail_msg: La muestra exacta requiere límite y ventana enteros positivos.
+    quiet: true
+
+- name: Esperar una ventana completa sin tráfico del consumidor de la muestra
+  ansible.builtin.pause:
+    seconds: "{{ cuota_ventana_segundos | default(60) | int + 1 }}"
+
+- name: Registrar inicio de la muestra con el reloj del controlador
+  ansible.builtin.command: date +%s
+  delegate_to: localhost
+  changed_when: false
+  register: cuota_exacta_inicio
+
+- name: Ejecutar la muestra declarada mediante la serie compartida
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_serie
+  vars:
+    serie_prueba: Cuota exacta en ventana limpia
+    serie_url: "{{ cuota_url }}"
+    serie_cabeceras: "{{ cuota_cabeceras | default({}) }}"
+    serie_n: "{{ cuota_muestra | int if cuota_sin_limite | default(false) else cuota_limite | int + 1 }}"
+    serie_contenido: "{{ cuota_json_contract | default([]) | length > 0 }}"
+
+- name: Registrar fin de la muestra con el mismo reloj
+  ansible.builtin.command: date +%s
+  delegate_to: localhost
+  changed_when: false
+  register: cuota_exacta_fin
+
+- name: Conservar códigos reales y duración de la muestra
+  ansible.builtin.set_fact:
+    cuota_exacta_codigos: "{{ wk_serie_codigos }}"
+    cuota_exacta_duracion: "{{ cuota_exacta_fin.stdout | int - cuota_exacta_inicio.stdout | int }}"
+
+- name: Exigir la secuencia exacta dentro de una ventana
+  ansible.builtin.assert:
+    that:
+      - cuota_exacta_duracion | int < cuota_ventana_segundos | default(60) | int
+      - cuota_exacta_duracion | int >= 0
+      - cuota_exacta_codigos == ([200] * (cuota_muestra | int) if cuota_sin_limite | default(false) else [200] * (cuota_limite | int) + [429])
+    fail_msg: La muestra no cumple la secuencia declarada o cruzó la ventana; no se acepta un 429 previo como prueba del límite.
+    quiet: true
+
+- name: Verificar contratos de los 200 usando las respuestas ya recibidas
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_http_contrato
+    apply:
+      no_log: true
+  vars:
+    comun_http: "{{ cuota_exacta_respuesta }}"
+    http_json_contract: "{{ cuota_json_contract | default([]) }}"
+    http_no_log: true
+  loop: "{{ comun_serie.results | selectattr('status', 'equalto', 200) | list }}"
+  loop_control:
+    loop_var: cuota_exacta_respuesta
+  when: cuota_json_contract | default([]) | length > 0
+
+- name: Mostrar únicamente los códigos comprobados de la cuota exacta
+  ansible.builtin.debug:
+    msg: "Cuota exacta: {{ cuota_exacta_codigos | join(' ') }} (muestra de {{ cuota_exacta_duracion }} s)"

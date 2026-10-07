@@ -1,0 +1,34 @@
+---
+# El HTTP 403 no prueba ausencia del rol: la propiedad se decide en Keycloak.
+- name: Consultar identidad y roles de alice antes de registrar propiedad
+  ansible.builtin.import_tasks: consultar_roles_alice.yml
+
+- name: Rechazar asignaciones preexistentes directas o efectivas de inventario
+  ansible.builtin.assert:
+    that:
+      - "'inventario' not in (lab08_roles_directos.json | map(attribute='name') | list)"
+      - "'inventario' not in (lab08_roles_efectivos.json | map(attribute='name') | list)"
+    fail_msg: Inventario ya pertenece a alice directa o indirectamente; no se reclama propiedad ni se retiran roles ajenos.
+    quiet: true
+  no_log: true
+
+- name: Comprobar propiedad de cualquier marcador existente
+  ansible.builtin.import_tasks: marcador_rol.yml
+
+- name: Registrar que el Lab 8 concede temporalmente inventario a alice
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: lab08-alice-inventario-owner
+        namespace: "{{ wk_ns_app }}"
+        labels:
+          workshop.module: connectivity-link
+          workshop.user: "{{ lab_id }}"
+      data:
+        realm: "{{ wk_realm }}"
+        user: alice
+        role: inventario
+        user_id: "{{ lab08_alice_lectura.json[0].id }}"

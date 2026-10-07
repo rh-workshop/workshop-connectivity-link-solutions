@@ -1,0 +1,7 @@
+---
+participant_access_verificar_solo: true
+participant_access_operation: append
+participant_idp_name: ''
+participant_idp_secret_name: ''
+participant_access_backup_path: ''
+participant_access_htpasswd_binary: htpasswd

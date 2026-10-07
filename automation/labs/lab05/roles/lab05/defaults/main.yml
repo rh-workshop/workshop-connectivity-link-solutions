@@ -1,0 +1,81 @@
+---
+lab05_validar: true
+
+# --- Plataforma de observabilidad (cluster-scoped, la prepara el instructor) --
+# true  = solo comprueba que todo existe y está sano (no escribe nada fuera del
+#         participante). Es el modo del clúster compartido.
+# false = crea lo que FALTE (operadores, Tempo, colector, UIPlugin, Grafana,
+#         kube-state-metrics, meshConfig de Istio, tracing de Kuadrant/Authorino
+#         y sufijo del plugin). Lo existente se detecta y NUNCA se modifica.
+lab05_plataforma_verificar_solo: true
+
+# Field manager propio: las etiquetas service/deployment de la HTTPRoute (que
+# es del Lab 4A) se gestionan aparte y no roban campos al manager del Lab 4A.
+lab05_field_manager: "{{ k8s_field_manager }}-lab05"
+
+# Recursos del participante
+lab05_telemetry_nombre: access-logs-errors
+lab05_telemetry_filtro: "response.code >= 400"
+lab05_etiquetas_ruta:
+  service: bank-api
+  deployment: bank-api
+
+# --- Validación ---------------------------------------------------------------
+# Thanos Querier: vacío = Route thanos-querier de openshift-monitoring.
+lab05_thanos_url: ""
+# Token con cluster-monitoring-view (p. ej. `oc whoami -t`). Vacío = el token
+# del contexto activo del kubeconfig. Nunca se escribe en el repo ni en el log.
+lab05_thanos_token: ""
+# Series que deben aparecer en istio_requests_total del Gateway (response_code).
+lab05_codigos_esperados: ["200", "401", "429"]
+lab05_metricas_reintentos: 36          # x 10 s: el scrape de UWM es cada 30 s
+# Trazas en Tempo (consulta desde el pod bank-api con su propio token de SA).
+lab05_tempo_validar: true
+lab05_tempo_reintentos: 18             # x 10 s
+
+# --- Parámetros de la plataforma (verificación e instalación) ----------------
+lab05_tempo_namespace: tempo
+lab05_tempo_instancia: rhcl
+lab05_tempo_tenant: dev
+lab05_tempo_tenant_id: 1610b0c3-c509-4592-a256-a1871353dbfa
+lab05_otel_nombre: otel
+lab05_otel_servicio: otel-collector.tempo.svc.cluster.local
+lab05_grafana_namespace: grafana-rhcl
+lab05_grafana_nombre: grafana-rhcl
+lab05_grafana_dashboards:
+  rhcl-app-developer: 21538
+  rhcl-platform-engineer: 20982
+  rhcl-business-user: 20981
+  rhcl-dns-operator: 22695
+lab05_ksm_namespace: rhcl-observability
+# Sufijo del workload del Gateway que usa el plugin de consola (solo OSSM).
+lab05_plugin_sufijo: "-istio"
+# Instalar Grafana comunitario (sin soporte de Red Hat) en modo instalación.
+lab05_grafana_instalar: true
+
+lab05_operadores:
+  - nombre: tempo-product
+    namespace: openshift-tempo-operator
+    canal: stable
+    fuente: redhat-operators
+    csv_prefijo: tempo-operator
+    og_all_namespaces: true
+  - nombre: opentelemetry-product
+    namespace: openshift-opentelemetry-operator
+    canal: stable
+    fuente: redhat-operators
+    csv_prefijo: opentelemetry-operator
+    og_all_namespaces: true
+  - nombre: cluster-observability-operator
+    namespace: openshift-cluster-observability-operator
+    canal: stable
+    fuente: redhat-operators
+    csv_prefijo: cluster-observability-operator
+    og_all_namespaces: true
+  - nombre: grafana-operator
+    namespace: grafana-rhcl
+    canal: v5
+    fuente: community-operators
+    csv_prefijo: grafana-operator
+    og_all_namespaces: false
+    solo_si_grafana: true

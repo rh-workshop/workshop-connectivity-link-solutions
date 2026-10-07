@@ -1,0 +1,110 @@
+---
+# Limpieza del Lab 6. El Application no lleva finalizer de recursos: al borrarlo
+# la RateLimitPolicy se queda en el clúster con el último valor de Git (5 tras
+# el revert), que es el estado del Lab 4A.
+- name: Registrar identidad y cuota existentes antes de retirar Argo CD
+  kubernetes.core.k8s_info:
+    api_version: kuadrant.io/v1
+    kind: RateLimitPolicy
+    name: "api-route-rl-{{ lab_id }}"
+    namespace: "{{ wk_ns_app }}"
+  register: lab06_cleanup_rlp_before
+
+- name: Borrar el Application de Argo CD del participante
+  kubernetes.core.k8s:
+    state: absent
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ lab06_application }}"
+    namespace: "{{ lab06_argocd_namespace }}"
+    wait: true
+
+- name: Borrar el repo Git efímero (Deployment, Service y ConfigMap)
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: git-politicas
+    namespace: "{{ wk_ns_app }}"
+    wait: true
+  loop:
+    - {v: apps/v1, k: Deployment}
+    - {v: v1, k: Service}
+    - {v: v1, k: ConfigMap}
+  loop_control:
+    label: "{{ item.k }}/git-politicas"
+
+- name: Comprobar si existe el namespace de la aplicación
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ wk_ns_app }}"
+  register: lab06_ns
+
+# Aplicar el Namespace sin la label con el field manager del Lab 6 la retira
+# (era su único dueño); el operador GitOps borra entonces sus Roles.
+- name: Retirar la label argocd.argoproj.io/managed-by del namespace
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}-lab06"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ wk_ns_app }}"
+  when:
+    - lab06_ns.resources | length > 0
+    - lab06_ns.resources[0].status.phase | default('') == 'Active'
+
+- name: Esperar lectura del namespace sin la etiqueta de gestión retirada
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ wk_ns_app }}"
+  register: lab06_cleanup_namespace
+  until: >-
+    lab06_cleanup_namespace.resources | length == 0 or
+    'argocd.argoproj.io/managed-by' not in (lab06_cleanup_namespace.resources[0].metadata.labels | default({}))
+  retries: "{{ lab06_sync_reintentos }}"
+  delay: 5
+  when:
+    - lab06_ns.resources | length > 0
+    - lab06_ns.resources[0].status.phase | default('') == 'Active'
+
+- name: Esperar a que el operador retire los permisos del application-controller
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_borrado
+  vars:
+    borrado_api_version: rbac.authorization.k8s.io/v1
+    borrado_kind: "{{ item }}"
+    borrado_nombre: "{{ lab06_argocd_instancia }}-argocd-application-controller"
+    borrado_namespace: "{{ wk_ns_app }}"
+  loop: [Role, RoleBinding]
+  when:
+    - lab06_ns.resources | length > 0
+    - lab06_ns.resources[0].status.phase | default('') == 'Active'
+
+- name: Releer la política preservada después de borrar la Application
+  kubernetes.core.k8s_info:
+    api_version: kuadrant.io/v1
+    kind: RateLimitPolicy
+    name: "api-route-rl-{{ lab_id }}"
+    namespace: "{{ wk_ns_app }}"
+  register: lab06_cleanup_rlp_after
+  when: lab06_cleanup_rlp_before.resources | length > 0
+
+- name: Exigir la misma política y cuota tras la limpieza
+  ansible.builtin.assert:
+    that:
+      - lab06_cleanup_rlp_after.resources | length == 1
+      - lab06_cleanup_rlp_after.resources[0].metadata.uid == lab06_cleanup_rlp_before.resources[0].metadata.uid
+      - lab06_cleanup_rlp_after.resources[0].spec.limits == lab06_cleanup_rlp_before.resources[0].spec.limits
+      - >-
+        not (lab06_ejercicio | bool and (lab06_git_modo == 'local' or lab06_git_push | bool)) or
+        lab06_cleanup_rlp_after.resources[0].spec.limits['per-user-per-minute'].rates[0].limit | int == lab06_limite_base | int
+    fail_msg: La limpieza no preservó la política/cuota o el recorrido completo no dejó el límite base tras el revert.
+    quiet: true
+  when: lab06_cleanup_rlp_before.resources | length > 0

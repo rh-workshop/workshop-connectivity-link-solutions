@@ -1,0 +1,58 @@
+---
+# «Comprueba el resultado» del Lab 4A: 401 sin token y con token inválido,
+# 200 con el token de alice y 429 al agotar la cuota.
+- name: Sin token
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 4A · sin token"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 401
+
+- name: Con token inválido
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 4A · token inválido"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 401
+    http_cabeceras:
+      Authorization: Bearer token-invalido
+
+- name: Pedir el token de alice a Keycloak
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: alice
+
+- name: Con el token de alice
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 4A · token de alice (si hay 429 previo, espera a la nueva ventana)"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 200
+    http_no_log: true
+    http_json_contract: "{{ wk_bank_json_contract }}"
+    http_cabeceras:
+      Authorization: "Bearer {{ wk_token }}"
+
+- name: Comprobar cuota publicada de alice en ventana limpia
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_cuota_exacta
+  vars:
+    cuota_url: "{{ wk_api_url }}"
+    cuota_limite: 5
+    cuota_ventana_segundos: 60
+    cuota_json_contract: "{{ wk_bank_json_contract }}"
+    cuota_cabeceras:
+      Authorization: "Bearer {{ wk_token }}"
+
+- name: Resumen del Lab 4A
+  ansible.builtin.debug:
+    msg: "Lab 4A OK · {{ wk_api_url }} · 401 sin token · 401 token inválido · 200 con JWT de alice y contrato JSON Data.Party · cuota exacta 200 200 200 200 200 429 en ventana limpia"

@@ -1,0 +1,92 @@
+---
+# Lab 3 · Gateway HTTPS, certificado, entrada de red, DNS y JWT por defecto.
+# Mismo orden y mismos manifiestos que https://rh-workshop.github.io/workshop-connectivity-link/lab3.html.
+
+- name: Exigir el issuer de Keycloak para la AuthPolicy JWT
+  ansible.builtin.assert:
+    that: wk_keycloak_issuer | length > 0
+    fail_msg: "Sin Keycloak no hay issuer para la AuthPolicy JWT del Gateway (define keycloak_host)."
+    quiet: true
+
+- name: Crear el Gateway HTTPS
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: gateway.yaml.j2
+
+- name: Esperar a que el controlador acepte el Gateway
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: gateway.networking.k8s.io/v1
+    espera_kind: Gateway
+    espera_nombre: "{{ wk_gateway }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Accepted
+
+- name: Solicitar el certificado con TLSPolicy
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: tls-policy.yaml.j2
+
+- name: Esperar al Certificate emitido por cert-manager
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: Certificate
+    espera_nombre: "{{ wk_gateway }}-https"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Ready
+
+- name: Publicar el Gateway con una Route passthrough (sin balanceador)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: route-apps.yaml.j2
+  when: entrada_modo == 'route'
+
+- name: Esperar a que el Gateway reciba dirección del balanceador (Programmed)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: gateway.networking.k8s.io/v1
+    espera_kind: Gateway
+    espera_nombre: "{{ wk_gateway }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Programmed
+  when: entrada_modo == 'loadbalancer'
+
+- name: Publicar el nombre con DNSPolicy
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: dns-policy.yaml.j2
+  when:
+    - entrada_modo == 'loadbalancer'
+    - dns_policy_habilitada | bool
+
+- name: Configurar la autenticación JWT por defecto en el Gateway
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: auth-policy-jwt.yaml.j2
+
+- name: Validar el Lab 3
+  ansible.builtin.import_tasks: validar.yml
+  when: lab03_validar | bool
+  tags: [validar]

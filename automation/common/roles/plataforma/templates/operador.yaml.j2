@@ -1,0 +1,41 @@
+# Operador {{ operador.nombre }}. Solo se aplica si en el
+# namespace no hay ya una Subscription a ese paquete.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ operador.namespace }}
+  labels:
+    workshop.module: connectivity-link
+{% if plataforma_og_crear %}
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ operador.namespace }}-og
+  namespace: {{ operador.namespace }}
+spec:
+{% if not plataforma_operador_all_namespaces %}
+  targetNamespaces:
+    - {{ operador.namespace }}
+{% endif %}
+  upgradeStrategy: Default
+{% endif %}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ operador.nombre }}
+  namespace: {{ operador.namespace }}
+spec:
+  channel: {{ operador.canal }}
+  installPlanApproval: Automatic
+  name: {{ operador.nombre }}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+{% if operador.nombre == 'rhcl-operator' and gateway_class == 'istio' %}
+  # Configuración oficial para OSSM/Istio (guía de instalación RHCL 1.4, §1.4).
+  config:
+    env:
+      - name: ISTIO_GATEWAY_CONTROLLER_NAMES
+        value: istio.io/gateway-controller
+{% endif %}

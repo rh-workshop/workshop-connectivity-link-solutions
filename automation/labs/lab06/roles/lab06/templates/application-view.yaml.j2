@@ -1,0 +1,31 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ lab_id }}-application-view
+  namespace: {{ lab06_argocd_namespace }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    resourceNames: [{{ lab06_application }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ lab_id }}-application-view
+  namespace: {{ lab06_argocd_namespace }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+subjects:
+  - kind: User
+    name: {{ lab_id }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: {{ lab_id }}-application-view
+  apiGroup: rbac.authorization.k8s.io

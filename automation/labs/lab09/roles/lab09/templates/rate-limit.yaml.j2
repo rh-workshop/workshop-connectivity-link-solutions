@@ -1,0 +1,26 @@
+# Lab 9 · pasos 5 y «planes»: un límite por plan con when sobre
+# auth.identity.plan, contado por Application (auth.identity.app). El plan
+# que no aparece (gold) no se limita.
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: bank-3scale-rl-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: bank-3scale-route-{{ lab_id }}
+  limits:
+{% for plan, limite in lab09_limites.items() %}
+    "plan-{{ plan }}":
+      when:
+        - predicate: auth.identity.plan == "{{ plan }}"
+      rates:
+        - limit: {{ limite }}
+          window: 60s
+      counters:
+        - expression: auth.identity.app
+{% endfor %}

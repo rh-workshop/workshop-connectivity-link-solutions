@@ -1,0 +1,12 @@
+---
+# Verificar no escribe; instalar/publicar/backup/restaurar requieren elección explícita.
+platform_git_repository_operation: verificar
+platform_git_repository_namespace: cl-platform-gitops
+platform_git_repository_name: cl-platform-git-repository
+platform_git_repository_image: registry.access.redhat.com/ubi9/python-311@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
+platform_git_repository_storage: 1Gi
+platform_git_repository_storage_class: ''
+platform_git_repository_argocd_identity: "{{ lookup('ansible.builtin.file', role_path ~ '/../../platform-argocd.yml') | from_yaml }}"
+platform_git_repository_argocd_namespace: "{{ platform_git_repository_argocd_identity.namespace }}"
+platform_git_repository_repo_server_label: "{{ platform_git_repository_argocd_identity.repo_server_label }}"
+platform_git_repository_bundle: ''

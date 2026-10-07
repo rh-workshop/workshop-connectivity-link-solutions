@@ -1,0 +1,11 @@
+---
+# Lab 2 · Inspección de la GatewayClass (solo lectura).
+#   Depende de: plataforma instalada.
+- name: Lab 2 · GatewayClass del proveedor
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: lab02
+      tags: [lab02]

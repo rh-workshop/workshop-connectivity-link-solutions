@@ -1,0 +1,30 @@
+---
+- name: Esperar al Issuer local Ready antes de crear el Certificate
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: Issuer
+    espera_nombre: "{{ ingress_certificate_issuer }}"
+    espera_namespace: "{{ ingress_certificate_namespace }}"
+    espera_condicion: Ready
+
+- name: Comprobar que las referencias configuradas coinciden con la fuente canónica
+  ansible.builtin.assert:
+    that:
+      - ingress_cert_canon.metadata.name == ingress_certificate_nombre
+      - ingress_cert_canon.metadata.namespace == ingress_certificate_namespace
+      - ingress_cert_canon.spec.secretName == ingress_certificate_secret
+      - ingress_cert_canon.spec.issuerRef.name == ingress_certificate_issuer
+    quiet: true
+  vars:
+    ingress_cert_canon: "{{ lookup('ansible.builtin.template', ingress_certificate_template) | from_yaml }}"
+
+- name: Crear o reconciliar únicamente un Certificate propio
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: asegurar_recurso
+  vars:
+    recurso_definicion: "{{ lookup('ansible.builtin.template', ingress_certificate_template) | from_yaml }}"
+    recurso_actualizar_gestionado: true

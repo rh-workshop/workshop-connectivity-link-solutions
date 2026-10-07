@@ -1,0 +1,30 @@
+---
+- name: Esperar al Deployment del webhook de cert-manager
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apps/v1
+    espera_kind: Deployment
+    espera_nombre: cert-manager-webhook
+    espera_namespace: cert-manager
+    espera_condicion: Available
+
+# EndpointSlice evita depender de la API Endpoints obsoleta. El Deployment
+# disponible no basta: el Service debe tener al menos una dirección lista.
+- name: Esperar direcciones Ready del Service cert-manager-webhook
+  kubernetes.core.k8s_info:
+    api_version: discovery.k8s.io/v1
+    kind: EndpointSlice
+    namespace: cert-manager
+    label_selectors:
+      - kubernetes.io/service-name=cert-manager-webhook
+  register: plataforma_webhook_endpoints
+  until: >-
+    plataforma_webhook_endpoints.resources | default([])
+    | selectattr('endpoints', 'defined') | map(attribute='endpoints') | flatten
+    | selectattr('conditions', 'defined')
+    | selectattr('conditions.ready', 'defined') | selectattr('conditions.ready', 'equalto', true)
+    | selectattr('addresses', 'defined') | map(attribute='addresses') | flatten | length > 0
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"

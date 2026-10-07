@@ -1,0 +1,214 @@
+---
+# Verificación de solo lectura de la plataforma de observabilidad del Lab 5
+# (bloques plegados «procedimiento del instructor» de lab5.adoc).
+
+- name: Seleccionar los operadores de observabilidad que aplican
+  ansible.builtin.set_fact:
+    lab05_operadores_activos: >-
+      {{ lab05_operadores | rejectattr('solo_si_grafana', 'defined') | list
+         + (lab05_operadores | selectattr('solo_si_grafana', 'defined') | list if lab05_grafana_instalar | bool else []) }}
+
+- name: Esperar a que cada operador de observabilidad esté Succeeded
+  ansible.builtin.include_role:
+    name: plataforma
+    tasks_from: esperar_csv
+  loop: "{{ lab05_operadores_activos }}"
+  loop_control:
+    loop_var: lab05_operador
+    label: "{{ lab05_operador.nombre }}"
+  vars:
+    csv_namespace: "{{ lab05_operador.namespace }}"
+    csv_prefijo: "{{ lab05_operador.csv_prefijo }}"
+
+- name: Leer la configuración de monitorización y el Prometheus de usuario
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ item.ns }}"
+  loop:
+    - {v: v1, k: ConfigMap, n: cluster-monitoring-config, ns: openshift-monitoring}
+    - {v: apps/v1, k: StatefulSet, n: prometheus-user-workload, ns: openshift-user-workload-monitoring}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+  register: lab05_uwm
+
+- name: Comprobar que user workload monitoring está activo
+  ansible.builtin.assert:
+    that:
+      - lab05_uwm.results[0].resources | length == 1
+      - (lab05_uwm.results[0].resources[0].data['config.yaml'] | default('{}') | from_yaml).enableUserWorkload | default(false) | bool
+      - lab05_uwm.results[1].resources | length == 1
+      - lab05_uwm.results[1].resources[0].status.readyReplicas | default(0) | int > 0
+    fail_msg: >-
+      User workload monitoring no está activo (enableUserWorkload en cluster-monitoring-config y
+      prometheus-user-workload listo): sin él no hay métricas del Gateway.
+    quiet: true
+
+- name: Esperar a la instancia TempoMonolithic (Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: tempo.grafana.com/v1alpha1
+    espera_kind: TempoMonolithic
+    espera_nombre: "{{ lab05_tempo_instancia }}"
+    espera_namespace: "{{ lab05_tempo_namespace }}"
+    espera_condicion: Ready
+
+- name: Esperar al colector OpenTelemetry (Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: opentelemetry.io/v1beta1
+    espera_kind: OpenTelemetryCollector
+    espera_nombre: "{{ lab05_otel_nombre }}"
+    espera_namespace: "{{ lab05_tempo_namespace }}"
+    espera_condicion: Ready
+
+- name: Esperar al UIPlugin DistributedTracing (Available)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: observability.openshift.io/v1alpha1
+    espera_kind: UIPlugin
+    espera_nombre: distributed-tracing
+    espera_condicion: Available
+
+- name: Esperar al exportador kube-state-metrics de gatewayapi_* (Available)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: apps/v1
+    espera_kind: Deployment
+    espera_nombre: kube-state-metrics-kuadrant
+    espera_namespace: "{{ lab05_ksm_namespace }}"
+    espera_condicion: Available
+
+- name: Leer la configuración del plano de datos (Istio, Telemetry, Kuadrant, Authorino, plugin)
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ item.ns | default(omit) }}"
+  loop:
+    - {v: sailoperator.io/v1, k: Istio, n: default}
+    - {v: telemetry.istio.io/v1, k: Telemetry, n: mesh-default, ns: istio-system}
+    - {v: kuadrant.io/v1beta1, k: Kuadrant, n: kuadrant, ns: kuadrant-system}
+    - {v: operator.authorino.kuadrant.io/v1beta1, k: Authorino, n: authorino, ns: kuadrant-system}
+    - {v: apps/v1, k: Deployment, n: kuadrant-console-plugin, ns: kuadrant-system}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+  register: lab05_plano
+
+- name: Resumir la configuración leída
+  ansible.builtin.set_fact:
+    lab05_mesh: "{{ (lab05_plano.results[0].resources | first | default({})).spec['values'].meshConfig | default({}) }}"
+    lab05_kuadrant_obs: "{{ (lab05_plano.results[2].resources | first | default({})).spec.observability | default({}) }}"
+    lab05_authorino_tracing: "{{ (lab05_plano.results[3].resources | first | default({})).spec.tracing | default({}) }}"
+    lab05_plugin_env: >-
+      {{ ((lab05_plano.results[4].resources | first | default({})).spec.template.spec.containers | default([{}]) | first).env
+         | default([]) | items2dict(key_name='name', value_name='value') }}
+
+- name: Comprobar tracing y access log JSON en el meshConfig del CR Istio
+  ansible.builtin.assert:
+    that:
+      - lab05_mesh.enableTracing | default(false) | bool
+      - lab05_mesh.extensionProviders | default([]) | selectattr('name', 'equalto', 'tempo-otlp') | list | length == 1
+      - lab05_mesh.accessLogEncoding | default('') == 'JSON'
+      - lab05_mesh.accessLogFile | default('') | length > 0
+      - lab05_plano.results[1].resources | length == 1
+    fail_msg: >-
+      El CR Istio default no tiene el tracing (proveedor tempo-otlp) y el access log JSON del Lab 5,
+      o falta la Telemetry mesh-default en istio-system. Es un paso del instructor (lab5.adoc, bloque «Trazas y access logs»).
+    quiet: true
+  when: gateway_class == 'istio'
+
+- name: Comprobar la observabilidad y el tracing del CR Kuadrant y de Authorino
+  ansible.builtin.assert:
+    that:
+      - lab05_kuadrant_obs.enable | default(false) | bool
+      - lab05_kuadrant_obs.tracing.defaultEndpoint | default('') | length > 0
+      - lab05_kuadrant_obs.dataPlane.httpHeaderIdentifier | default('') == 'x-request-id'
+      - lab05_authorino_tracing.endpoint | default('') == lab05_kuadrant_obs.tracing.defaultEndpoint
+    fail_msg: >-
+      Falta spec.observability (enable, tracing.defaultEndpoint, dataPlane.httpHeaderIdentifier) en el CR Kuadrant
+      o spec.tracing.endpoint propagado al CR Authorino: {{ lab05_kuadrant_obs | to_json }} / {{ lab05_authorino_tracing | to_json }}
+    quiet: true
+
+- name: Comprobar el sufijo del workload en el plugin de consola
+  ansible.builtin.assert:
+    that: lab05_plugin_env.METRICS_WORKLOAD_SUFFIX | default('') == lab05_plugin_sufijo
+    fail_msg: >-
+      El Deployment kuadrant-console-plugin no tiene METRICS_WORKLOAD_SUFFIX={{ lab05_plugin_sufijo }}: la tabla de
+      tráfico del plugin saldrá vacía con GatewayClass istio (lab5.adoc, paso 9).
+    quiet: true
+  when: gateway_class == 'istio'
+
+- name: Comprobar Grafana, su datasource y los dashboards de RHCL
+  when: lab05_grafana_instalar | bool
+  block:
+    - name: Esperar a la instancia Grafana (GrafanaReady)
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: grafana.integreatly.org/v1beta1
+        espera_kind: Grafana
+        espera_nombre: "{{ lab05_grafana_nombre }}"
+        espera_namespace: "{{ lab05_grafana_namespace }}"
+        espera_condicion: GrafanaReady
+
+    - name: Consultar los dashboards publicados en Grafana
+      kubernetes.core.k8s_info:
+        api_version: grafana.integreatly.org/v1beta1
+        kind: GrafanaDashboard
+        namespace: "{{ lab05_grafana_namespace }}"
+      register: lab05_dashboards
+
+    - name: Comprobar IDs y sincronización actual de los cuatro dashboards de RHCL
+      ansible.builtin.assert:
+        that:
+          - lab05_dashboard_actual | length > 0
+          - lab05_dashboard_actual.spec.grafanaCom.id | int == lab05_grafana_dashboards[item] | int
+          - lab05_dashboard_actual.status.conditions | selectattr('type', 'equalto', 'DashboardSynchronized') | selectattr('status', 'equalto', 'True') | list | length == 1
+          - (lab05_dashboard_actual.status.conditions | selectattr('type', 'equalto', 'DashboardSynchronized') | first).observedGeneration | int >= lab05_dashboard_actual.metadata.generation | int
+        fail_msg: "GrafanaDashboard {{ item }} ausente, ID distinto o sincronización obsoleta."
+        quiet: true
+      loop: "{{ lab05_grafana_dashboards.keys() | list }}"
+      vars:
+        lab05_dashboard_actual: "{{ lab05_dashboards.resources | selectattr('metadata.name', 'equalto', item) | first | default({}) }}"
+
+    - name: Leer el datasource de Thanos sin consultar ni imprimir su Secret
+      kubernetes.core.k8s_info:
+        api_version: grafana.integreatly.org/v1beta1
+        kind: GrafanaDatasource
+        namespace: "{{ lab05_grafana_namespace }}"
+        name: openshift-thanos
+      register: lab05_datasource
+
+    - name: Comprobar contrato y sincronización actual del datasource de Thanos
+      ansible.builtin.assert:
+        that:
+          - lab05_datasource.resources | length == 1
+          - lab05_ds.spec.datasource.type == 'prometheus'
+          - lab05_ds.spec.datasource.uid == 'prometheus'
+          - lab05_ds.spec.datasource.access == 'proxy'
+          - lab05_ds.spec.datasource.url == 'https://thanos-querier.openshift-monitoring.svc.cluster.local:9091'
+          - lab05_ds.status.conditions | selectattr('type', 'equalto', 'DatasourceSynchronized') | selectattr('status', 'equalto', 'True') | list | length == 1
+          - (lab05_ds.status.conditions | selectattr('type', 'equalto', 'DatasourceSynchronized') | first).observedGeneration | int >= lab05_ds.metadata.generation | int
+        fail_msg: Datasource de Thanos ausente, distinto o sin sincronización de su generación actual.
+        quiet: true
+      vars:
+        lab05_ds: "{{ lab05_datasource.resources | first | default({}) }}"
+
+- name: Resumen de la plataforma de observabilidad
+  ansible.builtin.debug:
+    msg:
+      - "Modo: {{ 'solo verificación' if lab05_plataforma_verificar_solo | bool else 'instalar lo que falte' }}"
+      - "Operadores: {{ plataforma_versiones | default({}) | dict2items | selectattr('key', 'in', lab05_operadores_activos | map(attribute='csv_prefijo') | list) | map(attribute='value') | join(', ') }}"
+      - "UWM activo · TempoMonolithic {{ lab05_tempo_instancia }} Ready · colector {{ lab05_otel_nombre }} Ready · UIPlugin Available · kube-state-metrics Available"
+      - "Tracing: {{ lab05_kuadrant_obs.tracing.defaultEndpoint }} · access log {{ lab05_mesh.accessLogEncoding | default('n/a') }} · plugin {{ lab05_plugin_env.METRICS_WORKLOAD_SUFFIX | default('n/a') }}"

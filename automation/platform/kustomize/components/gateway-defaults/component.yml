@@ -1,0 +1,8 @@
+phase: gateway-defaults
+source: common/roles/gateway_defaults/templates/configmap.yaml.j2
+generated_resource: manifests.yaml
+sync: manual
+enabled_by_default: false
+after: istio
+before: participant_labs
+gate: cd automation/ansible && ansible-playbook playbooks/platform-gate.yml -e platform_gate_phase=gateway-defaults

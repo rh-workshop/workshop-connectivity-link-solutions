@@ -1,0 +1,6 @@
+---
+console_plugin_verificar_solo: true
+console_plugin_namespace: kuadrant-system
+console_plugin_deployment: kuadrant-console-plugin
+console_plugin_contenedor: kuadrant-console-plugin
+console_plugin_sufijo: -istio

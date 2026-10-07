@@ -1,0 +1,20 @@
+---
+- name: Leer el marcador de propiedad de la asignación temporal
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: lab08-alice-inventario-owner
+    namespace: "{{ wk_ns_app }}"
+  register: lab08_marcador_rol
+
+- name: Rechazar marcadores ajenos antes de cambiar roles
+  ansible.builtin.assert:
+    that:
+      - item.metadata.labels.get('workshop.module', '') == 'connectivity-link'
+      - item.metadata.labels.get('workshop.user', '') == lab_id
+      - item.data.user_id is match('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+      - >-
+        item.data == {'realm': wk_realm, 'user': 'alice', 'role': 'inventario', 'user_id': item.data.user_id}
+    fail_msg: El marcador de rol no pertenece a este laboratorio; no se modifica Keycloak.
+    quiet: true
+  loop: "{{ lab08_marcador_rol.resources }}"

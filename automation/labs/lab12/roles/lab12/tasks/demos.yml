@@ -1,0 +1,303 @@
+---
+- name: Impedir demostraciones globales sobre plataforma gestionada por Argo CD
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: true
+
+# Pasos 2, 3, 5, 6 y 7 del lab: demostraciones de instructor sobre los CR
+# Authorino y Limitador de kuadrant-system. AFECTAN A TODOS LOS PARTICIPANTES.
+# El bloque always restaura SIEMPRE spec.replicas y spec.storage al valor
+# original (normalmente ausentes: los gestiona el operador) y borra el Redis.
+- name: Leer el estado original de los CR Authorino y Limitador
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: kuadrant-system
+  loop:
+    - {v: operator.authorino.kuadrant.io/v1beta1, k: Authorino, n: authorino}
+    - {v: limitador.kuadrant.io/v1alpha1, k: Limitador, n: limitador}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+  register: lab12_cr_original
+
+- name: Exigir ambos CR originales antes de modificar servicios globales
+  ansible.builtin.assert:
+    that:
+      - lab12_cr_original.results | length == 2
+      - lab12_cr_original.results[0].resources | length == 1
+      - lab12_cr_original.results[1].resources | length == 1
+    quiet: true
+
+- name: Guardar spec.replicas y spec.storage originales
+  ansible.builtin.set_fact:
+    lab12_orig_authorino: "{{ lab12_cr_original.results[0].resources[0].spec }}"
+    lab12_orig_limitador: "{{ lab12_cr_original.results[1].resources[0].spec }}"
+
+- name: Exigir contadores en memoria como estado inicial de la demostración
+  ansible.builtin.assert:
+    that:
+      - lab12_orig_limitador.storage | default({}) is mapping
+      - lab12_orig_limitador.storage | default({}) | length == 0
+    fail_msg: La demostración requiere almacenamiento inicial en memoria; no modifica un Limitador con Redis u otro almacenamiento preexistente.
+    quiet: true
+
+- name: Declarar el contrato publicado del inventario
+  ansible.builtin.set_fact:
+    lab12_inventario_json_contract:
+      - {path: path, equals: /v1/items}
+      - {path: authorization_recibida, equals: false}
+      - path: "contains(['{{ wk_lab_host }}', '{{ wk_lab_host }}:443'], host_header)"
+        equals: true
+
+- name: Avisar del impacto
+  ansible.builtin.debug:
+    msg: >-
+      DEMOSTRACIONES ACTIVAS · durante los próximos minutos TODAS las APIs del clúster responderán 500
+      (Authorino a 0) o sin cuota (Limitador a 0 / 2 réplicas). Original: Authorino replicas=
+      {{ lab12_orig_authorino.replicas | default('(operador)') }}, Limitador replicas=
+      {{ lab12_orig_limitador.replicas | default('(operador)') }} storage={{ lab12_orig_limitador.storage | default('(memoria)') }}.
+
+- name: Demostraciones con restauración garantizada
+  block:
+    - name: Pedir el token de alice
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: alice
+
+    - name: Guardar el token de alice
+      ansible.builtin.set_fact:
+        lab12_token_alice: "{{ wk_token }}"
+      no_log: true
+
+    # --- Paso 2 · Authorino a 0: falla CERRADO -----------------------------
+    - name: Escalar Authorino a 0 desde su CR
+      kubernetes.core.k8s:
+        state: patched
+        api_version: operator.authorino.kuadrant.io/v1beta1
+        kind: Authorino
+        name: authorino
+        namespace: kuadrant-system
+        definition:
+          spec:
+            replicas: 0
+
+    - name: Esperar a Authorino sin pods
+      ansible.builtin.include_tasks: esperar_despliegue.yml
+      vars:
+        dep_nombre: authorino
+        dep_replicas: 0
+
+    - name: Sin Authorino, bank-api responde 500 aunque el token sea válido
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_http
+      vars:
+        http_prueba: "Lab 12 · Authorino a 0 → 500 (falla cerrado)"
+        http_url: "{{ wk_api_url }}"
+        http_esperado: 500
+        http_no_log: true
+        http_cabeceras:
+          Authorization: "Bearer {{ lab12_token_alice }}"
+
+    - name: Restaurar Authorino
+      ansible.builtin.include_tasks: restaurar_authorino.yml
+
+    - name: Con Authorino restaurado, bank-api vuelve a 200
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_http
+      vars:
+        http_prueba: "Lab 12 · Authorino restaurado → 200"
+        http_url: "{{ wk_api_url }}"
+        http_esperado: 200
+        http_json_contract: "{{ wk_bank_json_contract }}"
+        http_no_log: true
+        http_cabeceras:
+          Authorization: "Bearer {{ lab12_token_alice }}"
+
+    # --- Paso 3 · Limitador a 0: falla ABIERTO -----------------------------
+    - name: Escalar Limitador a 0 desde su CR
+      kubernetes.core.k8s:
+        state: patched
+        api_version: limitador.kuadrant.io/v1alpha1
+        kind: Limitador
+        name: limitador
+        namespace: kuadrant-system
+        definition:
+          spec:
+            replicas: 0
+
+    - name: Esperar a Limitador sin pods
+      ansible.builtin.include_tasks: esperar_despliegue.yml
+      vars:
+        dep_nombre: limitador-limitador
+        dep_replicas: 0
+
+    - name: Renovar el token de bob antes de comprobar el fallo abierto
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: bob
+
+    - name: Seis peticiones válidas al inventario sin Limitador en una ventana limpia
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_cuota_exacta
+      vars:
+        cuota_url: "{{ wk_inv_url }}"
+        cuota_sin_limite: true
+        cuota_muestra: 6
+        cuota_ventana_segundos: 60
+        cuota_json_contract: "{{ lab12_inventario_json_contract }}"
+        cuota_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+
+    # --- Paso 5 · dos réplicas en memoria ----------------------------------
+    - name: Dos réplicas de Limitador con contadores en memoria
+      kubernetes.core.k8s:
+        state: patched
+        api_version: limitador.kuadrant.io/v1alpha1
+        kind: Limitador
+        name: limitador
+        namespace: kuadrant-system
+        definition:
+          spec:
+            replicas: 2
+
+    - name: Esperar a las dos réplicas
+      ansible.builtin.include_tasks: esperar_despliegue.yml
+      vars:
+        dep_nombre: limitador-limitador
+        dep_replicas: 2
+
+    - name: Renovar el token de bob antes de comprobar los contadores locales
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: bob
+
+    - name: Comprobar doce peticiones válidas o limitadas con dos contadores locales
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_cuota_replicada
+      vars:
+        cuota_url: "{{ wk_inv_url }}"
+        cuota_limite: 3
+        cuota_replicas: 2
+        cuota_muestra: 12
+        cuota_ventana_segundos: 60
+        cuota_json_contract: "{{ lab12_inventario_json_contract }}"
+        cuota_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+
+    # --- Paso 6 · Redis compartido ------------------------------------------
+    - name: Desplegar el Redis de demostración
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        server_side_apply:
+          field_manager: "{{ k8s_field_manager }}"
+        template: redis.yaml.j2
+
+    - name: Esperar a Redis
+      ansible.builtin.include_tasks: esperar_despliegue.yml
+      vars:
+        dep_nombre: limitador-redis
+        dep_replicas: 1
+
+    - name: Mover los contadores de Limitador a Redis
+      kubernetes.core.k8s:
+        state: patched
+        api_version: limitador.kuadrant.io/v1alpha1
+        kind: Limitador
+        name: limitador
+        namespace: kuadrant-system
+        definition:
+          spec:
+            storage:
+              redis:
+                configSecretRef:
+                  name: limitador-redis
+
+    - name: Esperar al rollout de Limitador con almacenamiento Redis
+      ansible.builtin.include_tasks: esperar_despliegue.yml
+      vars:
+        dep_nombre: limitador-limitador
+        dep_replicas: 2
+        dep_arg: redis
+
+    - name: Renovar el token de bob antes de comprobar Redis compartido
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: bob
+
+    - name: Comprobar tres respuestas válidas y después un 429 con Redis compartido
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_cuota_exacta
+      vars:
+        cuota_url: "{{ wk_inv_url }}"
+        cuota_limite: 3
+        cuota_ventana_segundos: 60
+        cuota_json_contract: "{{ lab12_inventario_json_contract }}"
+        cuota_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+  always:
+    # --- Paso 7 · restaurar SIEMPRE ------------------------------------------
+    - name: Inicializar errores de restauración sin ocultar el fallo de la demostración
+      ansible.builtin.set_fact:
+        lab12_errores_restauracion: []
+
+    - name: Intentar restaurar Authorino independientemente
+      block:
+        - name: Restaurar Authorino
+          ansible.builtin.include_tasks: restaurar_authorino.yml
+      rescue:
+        - name: Registrar el fallo de restauración de Authorino
+          ansible.builtin.set_fact:
+            lab12_errores_restauracion: "{{ lab12_errores_restauracion + ['Authorino'] }}"
+
+    - name: Intentar restaurar Limitador aunque falle Authorino
+      block:
+        - name: Restaurar Limitador (réplicas y almacenamiento originales)
+          ansible.builtin.include_tasks: restaurar_limitador.yml
+      rescue:
+        - name: Registrar el fallo de restauración de Limitador
+          ansible.builtin.set_fact:
+            lab12_errores_restauracion: "{{ lab12_errores_restauracion + ['Limitador'] }}"
+
+    - name: Intentar borrar Redis aunque falle la restauración de los componentes
+      block:
+        - name: Borrar el Redis de demostración
+          kubernetes.core.k8s:
+            state: absent
+            api_version: "{{ item.v }}"
+            kind: "{{ item.k }}"
+            name: limitador-redis
+            namespace: kuadrant-system
+            wait: true
+          loop:
+            - {v: apps/v1, k: Deployment}
+            - {v: v1, k: Service}
+            - {v: v1, k: Secret}
+          loop_control:
+            label: "{{ item.k }}/limitador-redis"
+      rescue:
+        - name: Registrar el fallo de limpieza de Redis
+          ansible.builtin.set_fact:
+            lab12_errores_restauracion: "{{ lab12_errores_restauracion + ['Redis'] }}"
+
+    - name: Mantener un fallo si alguna restauración no terminó
+      ansible.builtin.assert:
+        that: lab12_errores_restauracion | length == 0
+        fail_msg: "Restauración incompleta: {{ lab12_errores_restauracion | join(', ') }}. Requiere recuperación del instructor."
+        quiet: true

@@ -1,0 +1,132 @@
+---
+# Argo CD lee el modo de caché al arrancar. Solo el controlador dedicado,
+# sin operaciones activas, puede renovarse; nunca se borran pods ni se escala.
+- name: Renovar controlador dedicado cuando cambió el modo o existe opt-in
+  when: >-
+    platform_argocd_controller_plan.patch | default([]) | length > 0 or
+    platform_argocd_controller_restart | default(false) | bool
+  block:
+    - name: Releer Applications antes del reinicio
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+      register: platform_argocd_restart_apps
+      no_log: true
+
+    - name: Exigir Applications sin operaciones activas
+      ansible.builtin.include_tasks: controller_no_active_operations.yml
+
+    - name: Leer únicamente StatefulSet dedicado
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: StatefulSet
+        namespace: "{{ wk_platform_argocd.namespace }}"
+        name: "{{ wk_platform_argocd.name }}-application-controller"
+      register: platform_argocd_restart_sts
+
+    - name: Exigir propietario, identidad y estrategia del controlador dedicado
+      ansible.builtin.assert:
+        that:
+          - platform_argocd_restart_sts.resources | length == 1
+          - platform_argocd_restart_sts.resources[0].metadata.namespace == wk_platform_argocd.namespace
+          - platform_argocd_restart_sts.resources[0].metadata.name == wk_platform_argocd.name ~ '-application-controller'
+          - platform_argocd_restart_sts.resources[0].metadata.ownerReferences | selectattr('uid', 'equalto', platform_argocd_instance.resources[0].metadata.uid) | selectattr('kind', 'equalto', 'ArgoCD') | selectattr('name', 'equalto', wk_platform_argocd.name) | selectattr('controller', 'equalto', true) | list | length == 1
+          - platform_argocd_restart_sts.resources[0].spec.updateStrategy.type == 'RollingUpdate'
+          - platform_argocd_restart_sts.resources[0].spec.updateStrategy.rollingUpdate.partition | default(0) | int == 0
+          - platform_argocd_restart_sts.resources[0].spec.replicas | int > 0
+          - platform_argocd_restart_sts.resources[0].spec.template.spec.serviceAccountName == wk_platform_argocd.service_account
+        fail_msg: Reinicio rechazado; requiere StatefulSet dedicado propiedad de la instancia y RollingUpdate sin partición.
+        quiet: true
+
+    - name: Conservar precondiciones e inventario del controlador
+      ansible.builtin.set_fact:
+        platform_argocd_restart_original: "{{ platform_argocd_restart_sts.resources[0] }}"
+        platform_argocd_restart_selector: "{{ platform_argocd_restart_sts.resources[0].spec.selector.matchLabels | dict2items | community.general.json_query('[].join(`=`, [key, value])') }}"
+
+    - name: Leer pods anteriores del StatefulSet dedicado
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ wk_platform_argocd.namespace }}"
+        label_selectors: "{{ platform_argocd_restart_selector }}"
+      register: platform_argocd_restart_old_pods
+
+    - name: Exigir inventario completo perteneciente al StatefulSet
+      ansible.builtin.assert:
+        that:
+          - platform_argocd_restart_old_pods.resources | length == platform_argocd_restart_original.spec.replicas | int
+          - item.metadata.ownerReferences | selectattr('uid', 'equalto', platform_argocd_restart_original.metadata.uid) | selectattr('kind', 'equalto', 'StatefulSet') | selectattr('controller', 'equalto', true) | list | length == 1
+          - item.spec.serviceAccountName == wk_platform_argocd.service_account
+        quiet: true
+      loop: "{{ platform_argocd_restart_old_pods.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Releer Applications inmediatamente antes del patch
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+      register: platform_argocd_restart_apps
+      no_log: true
+
+    - name: Revalidar que ninguna Application inició una operación
+      ansible.builtin.include_tasks: controller_no_active_operations.yml
+
+    - name: Releer instancia propietaria antes del patch
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1beta1
+        kind: ArgoCD
+        namespace: "{{ wk_platform_argocd.namespace }}"
+        name: "{{ wk_platform_argocd.name }}"
+      register: platform_argocd_restart_instance
+
+    - name: Rechazar instancia recreada antes del patch
+      ansible.builtin.assert:
+        that:
+          - platform_argocd_restart_instance.resources | length == 1
+          - platform_argocd_restart_instance.resources[0].metadata.uid == platform_argocd_instance.resources[0].metadata.uid
+        quiet: true
+
+    - name: Renovar solo anotación de template con CAS UID y resourceVersion
+      kubernetes.core.k8s_json_patch:
+        api_version: apps/v1
+        kind: StatefulSet
+        namespace: "{{ wk_platform_argocd.namespace }}"
+        name: "{{ wk_platform_argocd.name }}-application-controller"
+        patch: >-
+          {{ [{'op': 'test', 'path': '/metadata/uid', 'value': platform_argocd_restart_original.metadata.uid},
+              {'op': 'test', 'path': '/metadata/resourceVersion', 'value': platform_argocd_restart_original.metadata.resourceVersion}] +
+             ([{'op': 'add', 'path': '/spec/template/metadata/annotations', 'value': {}}]
+              if platform_argocd_restart_original.spec.template.metadata.annotations is not defined else []) +
+             [{'op': 'add', 'path': '/spec/template/metadata/annotations/connectivity-link.redhat.com~1controller-restart',
+               'value': platform_argocd_restart_original.metadata.uid ~ ':' ~ platform_argocd_restart_original.metadata.resourceVersion}] }}
+
+    - name: Iniciar espera conjunta de revisión y pods
+      ansible.builtin.set_fact:
+        platform_argocd_restart_done: false
+
+    # La revisión puede cambiar entre ambas lecturas. Cada intento vuelve a
+    # leer StatefulSet y pods; nunca fija el hash de un intento anterior.
+    - name: Esperar estado pareado estable con intentos nativos acotados
+      ansible.builtin.include_tasks: controller_restart_probe.yml
+      loop: "{{ range(0, k8s_espera_reintentos | int) | list }}"
+      loop_control:
+        loop_var: platform_argocd_restart_attempt
+        label: "{{ platform_argocd_restart_attempt + 1 }}"
+
+    - name: Exigir renovación completa dentro del presupuesto de espera
+      ansible.builtin.assert:
+        that: [platform_argocd_restart_done | bool]
+        fail_msg: No convergieron el StatefulSet y sus pods nuevos Ready en una revisión estable.
+        quiet: true
+
+    - name: Acreditar el reinicio sin cambiar cuenta ni cantidad de réplicas
+      ansible.builtin.assert:
+        that:
+          - platform_argocd_restart_ready_sts.resources[0].spec.replicas == platform_argocd_restart_original.spec.replicas
+          - platform_argocd_restart_ready_sts.resources[0].spec.template.spec.serviceAccountName == wk_platform_argocd.service_account
+          - item.metadata.ownerReferences | selectattr('uid', 'equalto', platform_argocd_restart_original.metadata.uid) | selectattr('controller', 'equalto', true) | list | length == 1
+        quiet: true
+      loop: "{{ platform_argocd_restart_ready_pods.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"

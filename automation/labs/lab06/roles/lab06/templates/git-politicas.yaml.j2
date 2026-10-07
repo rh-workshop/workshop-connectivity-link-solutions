@@ -1,0 +1,101 @@
+# Repo Git efímero del Lab 6 dentro del clúster (lab06_git_modo=local).
+# Sustituye al «repo Git propio donde puedas hacer push» del participante: Argo CD
+# lo lee por smart HTTP y los commits se hacen dentro del pod (git-lab.sh). El
+# repo vive en un emptyDir: si el pod se reinicia, relanzar lab06.yml lo recrea.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-politicas
+  namespace: {{ wk_ns_app }}
+  labels:
+    app: git-politicas
+    workshop.user: {{ lab_id }}
+data:
+  git-servidor.py: |
+    {{ lookup('ansible.builtin.file', 'git-servidor.py') | indent(4) }}
+  git-lab.sh: |
+    {{ lookup('ansible.builtin.file', 'git-lab.sh') | indent(4) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-politicas
+  namespace: {{ wk_ns_app }}
+  labels:
+    app: git-politicas
+    workshop.user: {{ lab_id }}
+spec:
+  replicas: 1
+  # Un solo pod a la vez: el repo vive en su emptyDir.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: git-politicas
+  template:
+    metadata:
+      labels:
+        app: git-politicas
+      annotations:
+        # Si cambian los scripts, el pod se recrea y los carga (el repo se regenera).
+        workshop/scripts-sha1: "{{ (lookup('ansible.builtin.file', 'git-servidor.py') ~ lookup('ansible.builtin.file', 'git-lab.sh')) | hash('sha1') }}"
+    spec:
+      containers:
+        - name: git
+          image: {{ lab06_git_imagen }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              R="${GIT_RAIZ}/politicas.git"
+              [ -d "${R}" ] || git init -q --bare -b main "${R}"
+              git -C "${R}" config http.receivepack true
+              exec python3 /opt/wk/git-servidor.py
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: GIT_RAIZ, value: /srv/git}
+            - {name: GIT_RUTA, value: "{{ lab06_git_path }}"}
+            - {name: LAB_ID, value: "{{ lab_id }}"}
+            - {name: NS_APP, value: "{{ wk_ns_app }}"}
+            - {name: GIT_AUTHOR_NAME, value: "{{ lab06_git_autor_nombre }}"}
+            - {name: GIT_AUTHOR_EMAIL, value: "{{ lab06_git_autor_email }}"}
+            - {name: GIT_COMMITTER_NAME, value: "{{ lab06_git_autor_nombre }}"}
+            - {name: GIT_COMMITTER_EMAIL, value: "{{ lab06_git_autor_email }}"}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: http
+          volumeMounts:
+            - {name: scripts, mountPath: /opt/wk}
+            - {name: repos, mountPath: /srv}
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: git-politicas
+        - name: repos
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-politicas
+  namespace: {{ wk_ns_app }}
+  labels:
+    app: git-politicas
+    workshop.user: {{ lab_id }}
+spec:
+  selector:
+    app: git-politicas
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

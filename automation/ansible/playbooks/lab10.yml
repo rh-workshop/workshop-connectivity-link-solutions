@@ -1,0 +1,23 @@
+---
+# Lab 10 · Techo de cuota (overrides), M2M con scopes por método y canary 90/10.
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm, lab03, lab04a.
+- name: Lab 10 · Gobierno y ciclo de vida de una API
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]
+      lab03_validar: false
+    - role: lab04a
+      tags: [lab04a]
+      lab04a_validar: false
+    - role: lab10
+      tags: [lab10]

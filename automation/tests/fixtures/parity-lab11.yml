@@ -1,0 +1,45 @@
+source_page: modules/ROOT/pages/lab11-seguridad-b2b.adoc
+render_fixture: tests/fixtures/render-all.yml
+shell:
+  LAB_ID: demo
+  NS_APP: atp-demo
+  NS_GATEWAY: gateway-demo
+  LAB_HOST: api-demo.workshop.example.test
+  GATEWAY_CLASS: istio
+  KEYCLOAK_ISSUER: https://identity.example.test/realms/realm-demo
+  KEYCLOAK_REALM: realm-demo
+  LAB_API_KEY: DEMO-NOT-A-REAL-API-KEY
+  CLOUD_HOST: api-demo.cloud.example.test
+  ACME_ISSUER: letsencrypt-dns01
+  EXT_HOST: inventory.example.test
+  EXT_PORT: 8080
+  SOC_HOST: socios-demo.workshop.example.test
+  B2B_HOST: b2b-demo.workshop.example.test
+  MYIP: 192.0.2.10
+  KEY_BASICO: k-basico-demo
+  KEY_PREMIUM: k-premium-demo
+  KEY_BRONZE: k-bronze-demo
+  KEY_SILVER: k-silver-demo
+  KEY_GOLD: k-gold-demo
+  GIT_REPO: http://git-politicas.atp-demo.svc.cluster.local:8080/politicas.git
+heredoc_indices:
+- 2
+- 4
+- 5
+- 6
+- 7
+- 9
+- 10
+- 1
+templates:
+- path: labs/lab11/roles/lab11/templates/socios-auth.yaml.j2
+  heredoc_indices:
+  - 4
+- labs/lab11/roles/lab11/templates/gw-override.yaml.j2
+- labs/lab11/roles/lab11/templates/istio-authz.yaml.j2
+- labs/lab11/roles/lab11/templates/pki.yaml.j2
+- labs/lab11/roles/lab11/templates/envoyfilter.yaml.j2
+- labs/lab11/roles/lab11/templates/b2b-auth.yaml.j2
+- labs/lab11/roles/lab11/templates/backend.yaml.j2
+jinja:
+  lab11_bloque: 192.0.2.10/32

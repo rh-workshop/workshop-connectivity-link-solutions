@@ -1,0 +1,44 @@
+# Lab 8 · paso 7: AuthPolicy de ruta. Sustituye entera a la del Gateway
+# (atomic): repite el emisor JWT y el filtro user_id de la cuota, y exige el
+# rol de realm «inventario». Mensajes sin comillas simples (colgarían el 403).
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: inventario-auth-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: inventario-route-{{ lab_id }}
+  rules:
+    authentication:
+      "keycloak-jwt":
+        jwt:
+          issuerUrl: {{ wk_keycloak_issuer }}
+        credentials:
+          authorizationHeader:
+            prefix: Bearer
+    authorization:
+      "rol-inventario":
+        patternMatching:
+          patterns:
+            - predicate: auth.identity.realm_access.roles.exists(r, r == "inventario")
+    response:
+      unauthenticated:
+        code: 401
+        message:
+          value: "Token JWT requerido (emisor: {{ wk_realm }})"
+      unauthorized:
+        code: 403
+        message:
+          value: "Se requiere el rol de realm inventario"
+      success:
+        filters:
+          "identity":
+            json:
+              properties:
+                "user_id":
+                  selector: auth.identity.sub

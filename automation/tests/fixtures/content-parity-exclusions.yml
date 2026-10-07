@@ -1,0 +1,31 @@
+templates:
+- path: labs/lab03/roles/lab03/templates/route-apps.yaml.j2
+  status: not_compared
+  reason: Comando oc create route passthrough en Lab3; no heredoc YAML equivalente.
+- path: labs/lab05/roles/lab05/templates/operador.yaml.j2
+  status: not_compared
+  reason: Preparación compartida del instructor Lab5; mezcla variantes OperatorGroup
+    y operadores. Se renderiza offline, sin comparación universal de manifiestos publicados.
+- path: labs/lab05/roles/lab05/templates/plataforma-grafana.yaml.j2
+  status: not_compared
+  reason: Agrupa instancia, datasource y dashboards opcionales publicados por separado,
+    con token bootstrap y valores instructor; falta escenario de comparación completo.
+- path: labs/lab05/roles/lab05/templates/plataforma-tempo.yaml.j2
+  status: not_compared
+  reason: Agrupa Tempo, colector y UIPlugin compartidos que la página aplica en heredocs
+    separados; renderer cubre estructura, falta comparación distribuida completa.
+- path: labs/lab06/roles/lab06/templates/git-politicas.yaml.j2
+  status: not_compared
+  reason: Alternativa Git efímero de la solución; la página Lab6 usa el repositorio
+    propio del participante.
+- path: labs/lab11/roles/lab11/templates/ca-configmaps.yaml.j2
+  status: not_compared
+  reason: Lab11 crea CA ConfigMap desde archivo con oc create configmap y aplica infraestructura
+    por separado; comparación completa exige modelar ambos comandos.
+- path: labs/lab11/roles/lab11/templates/gateway.yaml.j2
+  status: not_compared
+  reason: Estado final Lab11 incorpora parches posteriores de PROXY protocol y parametersRef;
+    heredoc inicial no representa ese estado completo.
+- path: labs/lab12/roles/lab12/templates/rolebinding.yaml.j2
+  status: not_compared
+  reason: Lab12 usa oc create rolebinding; no manifiesto YAML publicado equivalente.

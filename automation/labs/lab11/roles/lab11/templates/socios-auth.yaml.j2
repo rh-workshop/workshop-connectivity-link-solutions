@@ -1,0 +1,56 @@
+# Lab 11 · pasos 5 a 8: AuthPolicy del listener «socios». Una sola plantilla
+# para las variantes del lab:
+#   lab11_socios_modo: anonima (solo IP, rechazo 403 en JSON) | jwt (IP + JWT)
+#   lab11_socios_predicado: expresión CEL sobre source.address (IPv4:puerto)
+# El estado final del lab es jwt con la IP del participante.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: socios-auth-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: socios-route-{{ lab_id }}
+  rules:
+    authentication:
+{% if lab11_socios_modo == 'jwt' %}
+      "keycloak-jwt":
+        jwt:
+          issuerUrl: {{ wk_keycloak_issuer }}
+        credentials:
+          authorizationHeader:
+            prefix: Bearer
+{% else %}
+      "anonima":
+        anonymous: {}
+{% endif %}
+    authorization:
+      "ip-permitida":
+        patternMatching:
+          patterns:
+            - predicate: {{ lab11_socios_predicado | to_json }}
+    response:
+{% if lab11_socios_modo == 'jwt' %}
+      unauthenticated:
+        code: 401
+        message:
+          value: "Token JWT requerido (emisor: {{ wk_realm }})"
+      unauthorized:
+        code: 403
+        message:
+          value: "IP de origen no autorizada para este socio"
+{% else %}
+      unauthorized:
+        code: 403
+        headers:
+          "content-type":
+            value: application/json
+        body:
+{% raw %}
+          expression: '"{\"error\":\"ip_no_permitida\",\"ip\":\"" + source.address.split(":")[0] + "\",\"detalle\":\"Solicite el alta de su IP al equipo de plataforma\"}"'
+{% endraw %}
+{% endif %}

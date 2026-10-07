@@ -1,0 +1,47 @@
+---
+# Todo el taller en orden para un participante: plataforma + Labs 1 → 12 y Bonus.
+# El Lab 8 exige lab08_ext_host (o EXT_HOST); los Labs 7 y 11 exigen entrada_modo=loadbalancer.
+#   ansible-playbook site.yml -e lab_id=user7
+# Una sola pasada por rol (sin repetir prerrequisitos). Al añadir un lab nuevo,
+# añade su rol al final de la lista del segundo play.
+- name: Plataforma
+  ansible.builtin.import_playbook: playbooks/plataforma.yml
+
+- name: Taller completo para el participante
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+    - role: keycloak_realm
+      tags: [keycloak]
+    - role: lab01
+      tags: [lab01]
+    - role: lab02
+      tags: [lab02]
+    - role: lab03
+      tags: [lab03]
+    - role: lab04a
+      tags: [lab04a]
+    - role: lab04b
+      tags: [lab04b]
+    - role: lab05
+      tags: [lab05]
+    - role: lab06
+      tags: [lab06]
+    - role: lab07
+      tags: [lab07]
+    - role: lab08
+      tags: [lab08]
+    - role: lab09
+      tags: [lab09]
+    - role: lab10
+      tags: [lab10]
+    - role: lab11
+      tags: [lab11]
+    - role: lab12
+      tags: [lab12]
+    - role: bonus_tokens
+      tags: [bonus_tokens]

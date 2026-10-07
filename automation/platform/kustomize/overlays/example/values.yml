@@ -1,0 +1,8 @@
+wk_ocp_domain: apps.cluster.example.com
+tls_issuer_name: workshop-selfsigned
+keycloak_namespace: keycloak
+keycloak_cr_nombre: keycloak
+keycloak_admin_secret: keycloak-bootstrap-admin
+gateway_class: istio
+public_hosts: []
+aws_load_balancer_subnet_ids: []

@@ -1,0 +1,37 @@
+---
+- name: Esperar condición mediante helper canónico
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: "{{ gate_resource.api_version }}"
+    espera_kind: "{{ gate_resource.kind }}"
+    espera_nombre: "{{ gate_resource.name }}"
+    espera_namespace: "{{ gate_resource.namespace | default(omit) }}"
+    espera_condicion: "{{ gate_resource.condition }}"
+  when: gate_resource.kind != 'Keycloak'
+
+- name: Comprobar que Ready no corresponde a una generación antigua
+  kubernetes.core.k8s_info:
+    api_version: "{{ gate_resource.api_version }}"
+    kind: "{{ gate_resource.kind }}"
+    name: "{{ gate_resource.name }}"
+    namespace: "{{ gate_resource.namespace | default(omit) }}"
+  register: gate_generation
+  vars:
+    gate_generation_resource: "{{ gate_generation.resources | first | default({}) }}"
+    gate_observed_generation: >-
+      {{ gate_generation_resource.status.observedGeneration | default(
+         (gate_generation_resource.status.conditions | default([])
+          | selectattr('type', 'equalto', gate_resource.condition)
+          | selectattr('observedGeneration', 'defined')
+          | map(attribute='observedGeneration') | first | default(none))) }}
+  until: >-
+    gate_generation.resources | length == 1 and
+    ((gate_generation_resource.status.conditions | default([])
+      | selectattr('type', 'equalto', gate_resource.condition)
+      | map(attribute='status') | map('lower') | select('equalto', 'true') | list | length) > 0) and
+    (gate_observed_generation is none or
+     gate_observed_generation | int >= gate_generation_resource.metadata.generation | default(0) | int)
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"

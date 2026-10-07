@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: comun
+  author: workshop-connectivity-link
+  description: Hechos comunes del taller (dominio, hostnames, realm) y tareas auxiliares de espera y prueba HTTP.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

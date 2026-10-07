@@ -1,0 +1,34 @@
+---
+# URL y token del Thanos Querier de OpenShift (Observe → Metrics por API).
+- name: Localizar la Route de Thanos Querier
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: thanos-querier
+    namespace: openshift-monitoring
+  register: lab12_thanos_route
+  when: lab12_thanos_url | length == 0
+
+- name: Fijar URL y token de consulta
+  ansible.builtin.set_fact:
+    wk_thanos_url: >-
+      {{ lab12_thanos_url if lab12_thanos_url | length > 0
+         else 'https://' ~ lab12_thanos_route.resources[0].spec.host }}
+    wk_thanos_token: >-
+      {{ lab12_prometheus_token if lab12_prometheus_token | length > 0
+         else (lab12_kc.users | selectattr('name', 'equalto', lab12_ctx.user) | first).user.token | default('') }}
+  vars:
+    lab12_kubeconfig: >-
+      {{ (lookup('ansible.builtin.env', 'K8S_AUTH_KUBECONFIG') or lookup('ansible.builtin.env', 'KUBECONFIG')
+          or '~/.kube/config').split(':') | first | expanduser }}
+    lab12_kc: "{{ lookup('ansible.builtin.file', lab12_kubeconfig) | from_yaml }}"
+    lab12_ctx: "{{ (lab12_kc.contexts | selectattr('name', 'equalto', lab12_kc['current-context']) | first).context }}"
+  no_log: true
+
+- name: Exigir un token para consultar métricas
+  ansible.builtin.assert:
+    that: wk_thanos_token | length > 0
+    fail_msg: >-
+      El kubeconfig activo no usa token (¿certificado de cliente?). Pasa -e lab12_prometheus_token=<token con
+      acceso a métricas>, por ejemplo el de «oc whoami -t» de un usuario cluster-admin.
+    quiet: true

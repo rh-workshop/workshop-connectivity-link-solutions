@@ -1,0 +1,9 @@
+---
+- name: GatewayClass Istio · defaults compartidos de AWS
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: gateway_defaults
+      tags: [gateway_defaults]

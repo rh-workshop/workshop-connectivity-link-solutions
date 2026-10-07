@@ -1,0 +1,5 @@
+---
+# Lab 1 no crea recursos: no hay nada que limpiar.
+- name: Lab 1 no deja recursos
+  ansible.builtin.debug:
+    msg: "Lab 1 es de solo lectura; no hay recursos que borrar."

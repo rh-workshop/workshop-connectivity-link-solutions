@@ -1,0 +1,26 @@
+---
+keycloak_realm_validar: true
+# Credenciales del admin del realm master. Orden: variables -> entorno
+# (KC_ADMIN_USER / KC_ADMIN_PASSWORD) -> Secret bootstrap del operador RHBK.
+keycloak_admin_usuario: "{{ lookup('ansible.builtin.env', 'KC_ADMIN_USER') }}"
+keycloak_admin_password: "{{ lookup('ansible.builtin.env', 'KC_ADMIN_PASSWORD') }}"
+keycloak_admin_desde_secret: true
+
+# Contenido del realm que usan los Labs 4A, 8 y 10.
+keycloak_roles_realm:
+  - customer
+  - inventario
+keycloak_client_scopes:
+  - bank:read
+  - bank:write
+keycloak_usuarios:
+  - username: alice
+    email: alice@example.com
+    first_name: Alice
+    last_name: Customer
+    roles: [customer]         # sin «inventario»: el Lab 8 muestra el 403 y lo asigna
+  - username: bob
+    email: bob@example.com
+    first_name: Bob
+    last_name: Inventory
+    roles: [inventario]

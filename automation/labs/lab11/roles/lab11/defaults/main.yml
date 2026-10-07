@@ -1,0 +1,18 @@
+---
+lab11_validar: true
+# IP pública (IPv4) del equipo que ejecuta las pruebas: entra en la allowlist
+# del listener «socios». Vacío = se detecta con lab11_urls_ip_publica.
+lab11_mi_ip: ""
+lab11_urls_ip_publica:
+  - https://ifconfig.me/ip
+  - https://api.ipify.org
+# Carpeta LOCAL (fuera del repositorio) donde se dejan los certificados de
+# cliente del socio y la CA falsa de la prueba negativa. Las claves van 0600.
+lab11_dir_local: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cache/workshop-cl/lab11-{{ lab_id }}"
+# Imagen del backend eco b2b-api (la del heredoc del lab).
+lab11_imagen: registry.redhat.io/ubi9/python-311
+# Paso 10: AuthorizationPolicy de Istio (DENY por CIDR). Se aplica y se retira.
+lab11_probar_istio: true
+# El Gateway B2B crea un SEGUNDO Service LoadBalancer en gateway-<lab_id>:
+# la ResourceQuota del tenant debe admitir al menos 2 (la del rol tenant lo hace).
+lab11_min_loadbalancers: 2

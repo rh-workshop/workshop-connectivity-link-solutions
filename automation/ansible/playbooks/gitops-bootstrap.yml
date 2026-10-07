@@ -1,0 +1,10 @@
+---
+# Bootstrap explícito del controlador; no sincroniza Applications ni instala RHCL.
+- name: Bootstrap · controlador OpenShift GitOps compartido
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: gitops_bootstrap
+      tags: [gitops_bootstrap]

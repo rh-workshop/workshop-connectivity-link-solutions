@@ -1,0 +1,39 @@
+# Namespaces del participante con la label gateway-tenant que exige el
+# allowedRoutes del Gateway (bootstrap-users.sh).
+{% for ns in [wk_ns_app, wk_ns_gateway] %}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ ns }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+    gateway-tenant: {{ lab_id }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: workshop-quota
+  namespace: {{ ns }}
+spec:
+  hard:
+{% for k, v in tenant_cuota.items() %}
+    {{ k }}: "{{ v }}"
+{% endfor %}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: workshop-defaults
+  namespace: {{ ns }}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+{% endfor %}

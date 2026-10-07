@@ -1,0 +1,26 @@
+---
+# Lab 8 · Servicio externo detrás del Gateway, un solo token, cuota y rol.
+#   Prerrequisitos que importa (idempotentes): tenant, keycloak_realm, lab03, lab04a.
+#   El servicio externo lo crea OpenTofu (automation/labs/lab08/opentofu):
+#     ansible-playbook playbooks/lab08.yml -e lab_id=user7 \
+#       -e lab08_ext_host=$(tofu -chdir=../labs/lab08/opentofu output -raw api_public_dns)
+- name: Lab 8 · Servicios externos y un solo token
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: tenant
+      tags: [tenant]
+      tenant_validar: false
+    - role: keycloak_realm
+      tags: [keycloak]
+      keycloak_realm_validar: false
+    - role: lab03
+      tags: [lab03]
+      lab03_validar: false
+    - role: lab04a
+      tags: [lab04a]
+      lab04a_validar: false
+    - role: lab08
+      tags: [lab08]

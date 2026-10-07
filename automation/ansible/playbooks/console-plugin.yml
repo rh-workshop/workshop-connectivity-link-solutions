@@ -1,0 +1,9 @@
+---
+- name: Plugin · configuración explícita del workload Kuadrant
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+    - role: console_plugin_configuration
+      tags: [console_plugin]

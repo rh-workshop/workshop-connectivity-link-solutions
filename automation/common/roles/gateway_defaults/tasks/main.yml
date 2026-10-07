@@ -1,0 +1,76 @@
+---
+- name: Respetar el gestor de la plataforma
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: "{{ not gateway_defaults_verificar_solo | bool }}"
+
+- name: Leer Istio antes de configurar defaults de clase
+  kubernetes.core.k8s_info:
+    api_version: sailoperator.io/v1
+    kind: Istio
+    name: "{{ gateway_defaults_istio_name }}"
+  register: gateway_defaults_istio
+
+- name: Inventariar todos los Gateways del clúster
+  kubernetes.core.k8s_info:
+    api_version: gateway.networking.k8s.io/v1
+    kind: Gateway
+  register: gateway_defaults_gateways
+
+- name: Leer namespaces propios del taller
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    label_selectors: [workshop.module=connectivity-link]
+  register: gateway_defaults_namespaces
+
+- name: Buscar defaults de Istio por etiqueta en su root namespace
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    namespace: "{{ gateway_defaults_namespace }}"
+    label_selectors: [gateway.istio.io/defaults-for-class=istio]
+  register: gateway_defaults_labeled
+
+- name: Leer el ConfigMap por identidad antes de cualquier adopción
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    namespace: "{{ gateway_defaults_namespace }}"
+    name: "{{ gateway_defaults_name }}"
+  register: gateway_defaults_named
+
+- name: Validar alcance y propiedad antes de escribir
+  ansible.builtin.import_tasks: guards.yml
+
+- name: Renderizar únicamente el patch de anotaciones del Service
+  ansible.builtin.set_fact:
+    gateway_defaults_desired: "{{ lookup('ansible.builtin.template', 'configmap.yaml.j2') | from_yaml }}"
+
+- name: Respaldar estado previo solo mediante opción explícita
+  ansible.builtin.include_tasks: backup.yml
+  when: gateway_defaults_backup | bool and not gateway_defaults_verificar_solo | bool
+
+- name: Aplicar defaults compartidos exclusivamente con gestor Ansible
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ gateway_defaults_desired }}"
+  when: not gateway_defaults_verificar_solo | bool
+
+- name: Leer los defaults efectivos
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    namespace: "{{ gateway_defaults_namespace }}"
+    name: "{{ gateway_defaults_name }}"
+  register: gateway_defaults_effective
+
+- name: Verificar el contenido canónico de los defaults
+  ansible.builtin.assert:
+    that:
+      - gateway_defaults_effective.resources | length == 1
+      - gateway_defaults_effective.resources[0].data == gateway_defaults_desired.data
+    fail_msg: Defaults ausentes o distintos; verificar no instala ni modifica el ConfigMap.
+    quiet: true

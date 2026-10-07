@@ -1,0 +1,36 @@
+# Lab 11 · paso 12: la CA de socios en un ConfigMap y el ConfigMap de
+# infraestructura (spec.infrastructure.parametersRef) que la monta en el pod
+# del Gateway, en /etc/certs, sin editar el Deployment generado.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: b2b-client-ca-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+data:
+  ca.crt: |
+    {{ lab11_ca_pem | trim | indent(4) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ lab11_gateway }}-infra
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+data:
+  deployment: |
+    spec:
+      template:
+        spec:
+          volumes:
+            - name: client-ca
+              configMap:
+                name: b2b-client-ca-{{ lab_id }}
+          containers:
+            - name: istio-proxy
+              volumeMounts:
+                - name: client-ca
+                  mountPath: /etc/certs
+                  readOnly: true

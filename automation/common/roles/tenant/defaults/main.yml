@@ -1,0 +1,20 @@
+---
+tenant_validar: true
+# Enlaza los permisos del taller al usuario OpenShift «lab_id» (userX). Con un
+# lab_id sin usuario real (p. ej. auto) los RoleBindings son inocuos.
+tenant_rbac_usuario: true
+# Namespace del operador cert-manager (lectura para el Lab 1).
+tenant_ns_cert_manager: cert-manager-operator
+# Cuota de CADA namespace del participante. Dimensionada para todos los labs:
+#   - services.loadbalancers 3: el Gateway del Lab 3, el de la nube (Lab 7) y
+#     el B2B del Lab 11; site.yml los crea los tres en la misma pasada.
+#   - limits.cpu 10 / limits.memory 8Gi: cada pod de Gateway de Istio declara
+#     limits.cpu=2 y 1Gi; caben 4 Gateways (Lab 3, Lab 7, Lab 11 y el diag-
+#     ClusterIP del Lab 12). Con 4 CPU solo cabían dos.
+tenant_cuota:
+  requests.cpu: "2"
+  requests.memory: 2Gi
+  limits.cpu: "10"
+  limits.memory: 8Gi
+  pods: "20"
+  services.loadbalancers: "3"

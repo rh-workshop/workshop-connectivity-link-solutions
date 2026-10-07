@@ -1,0 +1,43 @@
+platform_gate_phase: operators
+platform_gate_allow_reference_change: false
+platform_gate_resources:
+  istio-cni:
+  - api_version: sailoperator.io/v1
+    kind: IstioCNI
+    name: default
+    condition: Ready
+  istio:
+  - api_version: sailoperator.io/v1
+    kind: Istio
+    name: default
+    condition: Ready
+  - api_version: gateway.networking.k8s.io/v1
+    kind: GatewayClass
+    name: istio
+    condition: Accepted
+  kuadrant:
+  - api_version: kuadrant.io/v1beta1
+    kind: Kuadrant
+    name: kuadrant
+    namespace: kuadrant-system
+    condition: Ready
+  cert-manager:
+  - api_version: cert-manager.io/v1
+    kind: ClusterIssuer
+    name: '{{ tls_issuer_name }}'
+    condition: Ready
+  keycloak:
+  - api_version: k8s.keycloak.org/v2beta1
+    kind: Keycloak
+    name: '{{ keycloak_cr_nombre }}'
+    namespace: '{{ keycloak_namespace }}'
+    condition: Ready
+platform_gate_crds:
+- istiocnis.sailoperator.io
+- istios.sailoperator.io
+- kuadrants.kuadrant.io
+- clusterissuers.cert-manager.io
+- keycloaks.k8s.keycloak.org
+- tempomonolithics.tempo.grafana.com
+- opentelemetrycollectors.opentelemetry.io
+- grafanas.grafana.integreatly.org

@@ -1,0 +1,17 @@
+# TLSPolicy delega a cert-manager la emisión del cert para {{ wk_lab_host }}.
+apiVersion: kuadrant.io/v1
+kind: TLSPolicy
+metadata:
+  name: tls-policy-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ wk_gateway }}
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: {{ tls_issuer_name }}

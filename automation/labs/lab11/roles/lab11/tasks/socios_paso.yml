@@ -1,0 +1,29 @@
+---
+# Una variante de la AuthPolicy del listener «socios» y sus pruebas.
+#   vars: paso = {nombre, modo, predicado, pruebas: [{token: bool, esperado: int}]}
+- name: "Aplicar la variante · {{ paso.nombre }}"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: socios-auth.yaml.j2
+  vars:
+    lab11_socios_modo: "{{ paso.modo }}"
+    lab11_socios_predicado: "{{ paso.predicado }}"
+
+- name: "Probar · {{ paso.nombre }}"
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 11 · {{ paso.nombre }} · {{ 'con' if prueba.token else 'sin' }} token"
+    http_url: "{{ lab11_soc_url }}"
+    http_esperado: "{{ prueba.esperado }}"
+    http_intervalo: 3
+    http_no_log: true
+    http_cabeceras: "{{ {'Authorization': 'Bearer ' ~ wk_token} if prueba.token else {} }}"
+  loop: "{{ paso.pruebas }}"
+  loop_control:
+    loop_var: prueba
+    label: "{{ 'con' if prueba.token else 'sin' }} token → {{ prueba.esperado }}"

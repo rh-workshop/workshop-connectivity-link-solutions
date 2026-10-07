@@ -1,0 +1,23 @@
+# Valida una respuesta ya obtenida: no ejecuta otra petición.
+- name: Exigir JSON cuando la prueba declara un contrato de contenido
+  ansible.builtin.assert:
+    that:
+    - comun_http.content_type | default('') | lower is match('^application/json([;
+      ]|$)')
+    - comun_http.json is defined
+    - comun_http.json is mapping
+    fail_msg: La respuesta HTTP tiene el código esperado pero no es un objeto JSON
+      válido.
+    quiet: true
+  when: http_json_contract | default([]) | length > 0
+  no_log: '{{ http_no_log | default(false) }}'
+- name: Comprobar campos y tipos del contrato JSON publicado
+  ansible.builtin.assert:
+    that:
+    - (comun_http.json | community.general.json_query(item.path)) == item.equals
+    - (comun_http.json | community.general.json_query(item.path) | type_debug) ==
+      (item.equals | type_debug)
+    fail_msg: La respuesta JSON no cumple un campo o tipo del contrato publicado.
+    quiet: true
+  loop: '{{ http_json_contract | default([]) }}'
+  no_log: '{{ http_no_log | default(false) }}'

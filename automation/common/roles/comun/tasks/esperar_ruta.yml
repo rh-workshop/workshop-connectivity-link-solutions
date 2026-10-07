@@ -1,0 +1,30 @@
+---
+# Espera a que una HTTPRoute quede Accepted y ResolvedRefs en su Gateway
+# (misma comprobación que el Lab 4A, reutilizable por los labs siguientes).
+#   vars: ruta_nombre, ruta_namespace (por defecto wk_ns_app),
+#         ruta_gateway (por defecto wk_gateway)
+- name: "Esperar la HTTPRoute {{ ruta_nombre }} (Accepted y ResolvedRefs)"
+  block:
+    - name: "Consultar el estado de {{ ruta_nombre }} en su Gateway"
+      kubernetes.core.k8s_info:
+        api_version: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        name: "{{ ruta_nombre }}"
+        namespace: "{{ ruta_namespace | default(wk_ns_app) }}"
+      register: comun_ruta
+      vars:
+        comun_ruta_conds: >-
+          {{ comun_ruta.resources[0].status.parents | default([])
+             | selectattr('parentRef.name', 'equalto', ruta_gateway | default(wk_gateway))
+             | map(attribute='conditions') | flatten
+             | selectattr('status', 'equalto', 'True') | map(attribute='type') | list
+             if comun_ruta.resources | default([]) | length > 0 else [] }}
+      until: "'Accepted' in comun_ruta_conds and 'ResolvedRefs' in comun_ruta_conds"
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: "Fallar con el estado de {{ ruta_nombre }}"
+      ansible.builtin.fail:
+        msg: >-
+          La HTTPRoute {{ ruta_nombre }} no quedó Accepted/ResolvedRefs en {{ ruta_gateway | default(wk_gateway) }}:
+          {{ (comun_ruta.resources | default([{}]) | first).status.parents | default('sin estado') | to_json }}

@@ -1,0 +1,70 @@
+---
+- name: Resolver credenciales para consultar Keycloak sin modificarlo
+  ansible.builtin.include_role:
+    name: keycloak_realm
+    tasks_from: credenciales
+
+- name: Obtener un token administrativo para la lectura de roles
+  ansible.builtin.uri:
+    url: "{{ wk_keycloak_url }}/realms/{{ keycloak_admin_realm }}/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: password
+      client_id: admin-cli
+      username: "{{ wk_kc_admin_usuario }}"
+      password: "{{ wk_kc_admin_password }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    status_code: 200
+  register: lab08_admin_lectura
+  no_log: true
+
+- name: Buscar exactamente el usuario alice en el realm del participante
+  ansible.builtin.uri:
+    url: "{{ wk_keycloak_url }}/admin/realms/{{ wk_realm }}/users?username=alice&exact=true"
+    headers:
+      Authorization: "Bearer {{ lab08_admin_lectura.json.access_token }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    status_code: 200
+  register: lab08_alice_lectura
+  no_log: true
+
+- name: Verificar identidad y UUID de alice antes de consultar sus asignaciones
+  ansible.builtin.assert:
+    that:
+      - lab08_alice_lectura.json | type_debug == 'list'
+      - lab08_alice_lectura.json | length == 1
+      - lab08_alice_lectura.json[0].username == 'alice'
+      - lab08_alice_lectura.json[0].id is match('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+    fail_msg: No se pudo verificar inequívocamente el usuario alice; no se cambian roles.
+    quiet: true
+  no_log: true
+
+- name: Leer asignaciones directas del usuario por UUID
+  ansible.builtin.uri:
+    url: "{{ wk_keycloak_url }}/admin/realms/{{ wk_realm }}/users/{{ lab08_alice_lectura.json[0].id }}/role-mappings/realm"
+    headers:
+      Authorization: "Bearer {{ lab08_admin_lectura.json.access_token }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    status_code: 200
+  register: lab08_roles_directos
+  no_log: true
+
+- name: Leer roles efectivos incluidos composites y grupos
+  ansible.builtin.uri:
+    url: "{{ wk_keycloak_url }}/admin/realms/{{ wk_realm }}/users/{{ lab08_alice_lectura.json[0].id }}/role-mappings/realm/composite"
+    headers:
+      Authorization: "Bearer {{ lab08_admin_lectura.json.access_token }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    status_code: 200
+  register: lab08_roles_efectivos
+  no_log: true
+
+- name: Exigir respuestas de roles estructuradas antes de tomar decisiones de propiedad
+  ansible.builtin.assert:
+    that:
+      - lab08_roles_directos.json | type_debug == 'list'
+      - lab08_roles_efectivos.json | type_debug == 'list'
+    fail_msg: Keycloak no devolvió listas de roles verificables; no se cambia la asignación.
+    quiet: true
+  no_log: true

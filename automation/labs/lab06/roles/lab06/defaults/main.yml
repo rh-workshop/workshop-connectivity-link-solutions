@@ -1,0 +1,51 @@
+---
+lab06_validar: true
+
+# --- Plataforma: OpenShift GitOps (cluster-scoped, la prepara el instructor) --
+# true = solo verifica operador e instancia; false = los instala si faltan.
+lab06_plataforma_verificar_solo: true
+lab06_gitops_operador:
+  nombre: openshift-gitops-operator
+  namespace: openshift-gitops-operator
+  canal: latest
+  csv_prefijo: openshift-gitops-operator
+lab06_argocd_namespace: openshift-gitops
+lab06_argocd_instancia: openshift-gitops
+
+# --- Application del participante --------------------------------------------
+lab06_application: "rhcl-policies-{{ lab_id }}"
+lab06_project: default
+
+# --- Repositorio Git -----------------------------------------------------------
+# local   = repo Git efímero DENTRO del clúster (Deployment git-politicas en
+#           atp-<lab_id>, protocolo smart HTTP). Los commits del lab se hacen
+#           con k8s_exec en ese pod. No necesita credenciales ni Internet.
+# externo = el repo del participante (lab06_git_repo_url). Argo CD lo lee; si
+#           lab06_git_push=true, la máquina de control clona, hace commit y push
+#           (credencial opcional por vault: lab06_git_usuario / lab06_git_token).
+lab06_git_modo: local
+lab06_git_repo_url: ""
+# Preparación SSH opcional; no crea Applications ni modifica known_hosts global.
+lab06_repository_credentials_enabled: false
+lab06_repository_credentials_verify_only: true
+lab06_repository_credentials_name: "lab06-repository-{{ lab_id }}"
+lab06_repository_ssh_private_key: ""
+lab06_git_revision: main
+lab06_git_path: "gitops/{{ lab_id }}"
+lab06_git_push: false
+# URL con la que empuja la máquina de control (por defecto, la misma que lee Argo CD).
+lab06_git_push_url: "{{ lab06_git_repo_url }}"
+# lab06_git_usuario: "<desde ansible-vault>"
+# lab06_git_token: "<desde ansible-vault>"
+lab06_git_autor_nombre: Workshop Ansible
+lab06_git_autor_email: workshop-ansible@example.com
+lab06_git_imagen: registry.access.redhat.com/ubi9/python-311@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
+
+# --- Recorrido del lab ---------------------------------------------------------
+# true = repite el recorrido completo: commit 5→20, cambio manual deshecho por
+# self-heal y git revert a 5 (acciones propias del lab, se repiten por diseño).
+lab06_ejercicio: true
+lab06_limite_base: 5
+lab06_limite_cambio: 20
+lab06_limite_drift: 1
+lab06_sync_reintentos: 60              # x 5 s

@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab02
+  author: workshop-connectivity-link
+  description: Lab 2 · Inspección de la GatewayClass del proveedor (solo lectura).
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

@@ -1,0 +1,68 @@
+---
+- name: Listar los CSV de kuadrant-system (oc get csv -n kuadrant-system)
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: kuadrant-system
+  register: lab01_csv
+
+- name: Comprobar que los cuatro operadores de RHCL están Succeeded
+  ansible.builtin.assert:
+    that: >-
+      lab01_csv.resources | selectattr('metadata.name', 'match', item ~ '\.')
+      | selectattr('status.phase', 'equalto', 'Succeeded') | list | length > 0
+    fail_msg: "El CSV {{ item }} no está Succeeded en kuadrant-system."
+    quiet: true
+  loop: "{{ lab01_csvs + (['servicemeshoperator3'] if gateway_class == 'istio' else []) }}"
+
+- name: Comprobar el CR Kuadrant (oc wait kuadrant/kuadrant --for=condition=Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1beta1
+    espera_kind: Kuadrant
+    espera_nombre: kuadrant
+    espera_namespace: kuadrant-system
+    espera_condicion: Ready
+    espera_reintentos: 6
+
+- name: Listar los pods de kuadrant-system
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: kuadrant-system
+    field_selectors:
+      - status.phase=Running
+  register: lab01_pods
+
+- name: Comprobar que Authorino y Limitador están Running
+  ansible.builtin.assert:
+    that: lab01_pods.resources | map(attribute='metadata.name') | select('match', '^' ~ item) | list | length > 0
+    fail_msg: "No hay un pod {{ item }} en Running en kuadrant-system: ninguna política actuaría."
+    quiet: true
+  loop:
+    - authorino
+    - limitador-limitador
+
+- name: Consultar los CRDs de política (oc api-resources --api-group=kuadrant.io)
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: "{{ item }}"
+  loop: "{{ lab01_crds }}"
+  register: lab01_crd
+  failed_when: lab01_crd.resources | length == 0
+
+- name: Comprobar que el complemento está habilitado y su backend disponible
+  ansible.builtin.include_role:
+    name: console_plugin_configuration
+    tasks_from: habilitacion
+  vars:
+    console_plugin_verificar_solo: true
+
+- name: Resumen del Lab 1
+  ansible.builtin.debug:
+    msg:
+      - "CSVs: {{ lab01_csv.resources | selectattr('status.phase', 'equalto', 'Succeeded') | map(attribute='metadata.name') | select('match', '(rhcl|authorino|limitador|dns|servicemesh)') | join(', ') }}"
+      - "Kuadrant Ready · Authorino y Limitador Running · {{ lab01_crds | length }} CRDs de kuadrant.io presentes"

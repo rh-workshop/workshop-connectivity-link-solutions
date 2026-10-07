@@ -1,0 +1,12 @@
+---
+# Una Application que terminó (incluso Error) no es una operación activa.
+- name: Rechazar operaciones en curso antes de renovar la caché
+  ansible.builtin.assert:
+    that:
+      - item.operation | default(none) == none
+      - item.status.operationState.phase | default('') not in ['Running', 'Pending', 'Terminating']
+    fail_msg: No se reinicia el controlador mientras exista una operación activa.
+    quiet: true
+  loop: "{{ platform_argocd_restart_apps.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name | default('Application') }}"

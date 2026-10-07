@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab01
+  author: workshop-connectivity-link
+  description: Lab 1 · Inspección del operador RHCL y del CR Kuadrant (solo lectura).
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

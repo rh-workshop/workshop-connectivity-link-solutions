@@ -1,0 +1,4 @@
+expected_account_id = "000000000000"
+region = "us-east-2"
+zone_name = "example.com"
+ingress_domain = "apps.example.com"

@@ -1,0 +1,76 @@
+---
+# Excepción documentada del operador: la API padre no expone este env.
+# Argo CD no debe gestionar el Deployment generado.
+- name: Validar el gestor en esta excepción explícita del plugin
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: false
+
+- name: Exigir el Deployment y namespace conocidos del plugin Kuadrant
+  ansible.builtin.assert:
+    that:
+      - console_plugin_namespace == 'kuadrant-system'
+      - console_plugin_deployment == 'kuadrant-console-plugin'
+    quiet: true
+
+- name: Leer el Deployment existente sin crear recursos
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ console_plugin_deployment }}"
+    namespace: "{{ console_plugin_namespace }}"
+  register: console_plugin_actual
+
+- name: Comprobar habilitación del plugin de consola antes del workaround
+  ansible.builtin.import_tasks: habilitacion.yml
+
+- name: Comprobar existencia, propietario operador y ausencia de seguimiento Argo CD
+  ansible.builtin.import_tasks: validar_propiedad.yml
+
+- name: Localizar únicamente el contenedor existente solicitado
+  ansible.builtin.set_fact:
+    console_plugin_contenedores: >-
+      {{ console_plugin_actual.resources[0].spec.template.spec.containers
+         | selectattr('name', 'equalto', console_plugin_contenedor) | list }}
+
+- name: Exigir un único contenedor con el nombre configurado
+  ansible.builtin.assert:
+    that: console_plugin_contenedores | length == 1
+    quiet: true
+
+- name: Localizar el valor actual del sufijo
+  ansible.builtin.set_fact:
+    console_plugin_env_actual: >-
+      {{ console_plugin_contenedores[0].env | default([])
+         | selectattr('name', 'equalto', 'METRICS_WORKLOAD_SUFFIX') | list }}
+
+- name: Exigir que el env no esté duplicado
+  ansible.builtin.assert:
+    that: console_plugin_env_actual | length <= 1
+    quiet: true
+
+- name: Explicar el workaround pendiente en modo de solo verificación
+  ansible.builtin.assert:
+    that:
+      - console_plugin_env_actual | length == 1
+      - console_plugin_env_actual[0].value | default('') == console_plugin_sufijo
+      - console_plugin_env_actual[0].valueFrom is not defined
+    fail_msg: >-
+      METRICS_WORKLOAD_SUFFIX no coincide. Autoriza console_plugin_verificar_solo=false
+      para aplicar exclusivamente el workaround documentado del operador.
+    quiet: true
+  when: console_plugin_verificar_solo | bool
+
+- name: Aplicar únicamente el env del sufijo cuando su valor difiere
+  ansible.builtin.include_tasks: patch.yml
+  when:
+    - not console_plugin_verificar_solo | bool
+    - >-
+      console_plugin_env_actual | length == 0 or
+      console_plugin_env_actual[0].value | default('') != console_plugin_sufijo or
+      console_plugin_env_actual[0].valueFrom is defined
+
+- name: Esperar reconciliación y comprobar el env efectivo
+  ansible.builtin.import_tasks: verificar.yml

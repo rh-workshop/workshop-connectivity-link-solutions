@@ -1,0 +1,376 @@
+---
+# «Comprueba el resultado» del Lab 5, sin consola: genera 401, 200 y 429 con un
+# User-Agent propio de esta ejecución y localiza el tráfico en las señales:
+#   · access log JSON del Gateway (401 y 429 registrados, 200 no: filtro Telemetry)
+#   · series istio_requests_total del Gateway en Thanos (200, 401, 429)
+#   · trazas del servicio del Gateway en Tempo (tenant dev)
+
+- name: Fijar los User-Agent de esta ejecución (identifican las líneas del access log)
+  ansible.builtin.set_fact:
+    lab05_ua: "wk-lab05-{{ lab_id }}-{{ now(utc=true).strftime('%Y%m%d%H%M%S') }}"
+
+- name: Localizar el Thanos Querier
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: thanos-querier
+    namespace: openshift-monitoring
+  register: lab05_thanos_route
+  when: lab05_thanos_url | length == 0
+
+- name: Fijar URL y token de Thanos (token del kubeconfig activo si no se pasa)
+  ansible.builtin.set_fact:
+    lab05_thanos: "{{ lab05_thanos_url if lab05_thanos_url | length > 0 else 'https://' ~ lab05_thanos_route.resources[0].spec.host }}"
+    lab05_thanos_bearer: >-
+      {{ lab05_thanos_token if lab05_thanos_token | length > 0
+         else ((lab05_kc.users | selectattr('name', 'equalto', lab05_kc_ctx.user) | first).user.token | default('')) }}
+  vars:
+    lab05_kc_fichero: >-
+      {{ (lookup('ansible.builtin.env', 'K8S_AUTH_KUBECONFIG') or lookup('ansible.builtin.env', 'KUBECONFIG')
+          or '~/.kube/config').split(':') | first | expanduser }}
+    lab05_kc: "{{ lookup('ansible.builtin.file', lab05_kc_fichero) | from_yaml }}"
+    lab05_kc_ctx: "{{ (lab05_kc.contexts | selectattr('name', 'equalto', lab05_kc['current-context']) | first).context }}"
+  no_log: true
+
+- name: Exigir un token para consultar Thanos
+  ansible.builtin.assert:
+    that: lab05_thanos_bearer | length > 0
+    fail_msg: >-
+      El kubeconfig activo no tiene token (¿certificado de cliente?). Pasa uno con cluster-monitoring-view:
+      -e lab05_thanos_token=$(oc whoami -t)
+    quiet: true
+
+- name: Leer series para identificar etiquetas reales del workload Gateway
+  ansible.builtin.uri:
+    url: "{{ lab05_thanos }}/api/v1/query?query={{ lab05_discovery_query | urlencode }}"
+    headers: {Authorization: "Bearer {{ lab05_thanos_bearer }}"}
+    validate_certs: false
+    return_content: true
+    timeout: 20
+  vars:
+    lab05_discovery_query: 'istio_requests_total{namespace="{{ wk_ns_gateway }}"} or istio_requests_total{source_workload_namespace="{{ wk_ns_gateway }}"}'
+  register: lab05_discovery
+  no_log: true
+
+- name: Exigir respuesta Prometheus de éxito con vector JSON
+  ansible.builtin.assert:
+    that:
+      - lab05_discovery.json.status == 'success'
+      - lab05_discovery.json.data.resultType == 'vector'
+      - lab05_discovery.json.data.result is sequence
+    quiet: true
+
+- name: Seleccionar una serie identificada con el Gateway real
+  ansible.builtin.set_fact:
+    lab05_gateway_series: >-
+      {{ (lab05_discovery.json.data.result | selectattr('metric.workload', 'defined') | selectattr('metric.workload', 'equalto', wk_gateway ~ '-' ~ gateway_class) | list)
+       + (lab05_discovery.json.data.result | selectattr('metric.source_workload', 'defined') | selectattr('metric.source_workload', 'equalto', wk_gateway ~ '-' ~ gateway_class) | list) }}
+
+- name: Exigir identidad de workload antes de generar tráfico
+  ansible.builtin.assert:
+    that: lab05_gateway_series | length > 0
+    fail_msg: No hay serie Istio con workload/source_workload del Gateway real; no se acepta otra serie del namespace.
+    quiet: true
+
+- name: Leer epoch portable independiente de la zona horaria antes del tráfico
+  ansible.builtin.command: date +%s
+  register: lab05_epoch
+  changed_when: false
+
+- name: Construir consulta desde etiquetas observadas y registrar inicio de la prueba
+  ansible.builtin.set_fact:
+    lab05_promql: >-
+      sum by (response_code) (istio_requests_total{ {{ 'namespace' if lab05_gateway_series[0].metric.get('namespace', '') == wk_ns_gateway else 'source_workload_namespace' }}="{{ wk_ns_gateway }}",{{ 'workload' if lab05_gateway_series[0].metric.get('workload', '') == wk_gateway ~ '-' ~ gateway_class else 'source_workload' }}="{{ wk_gateway }}-{{ gateway_class }}"})
+    lab05_started: "{{ lab05_epoch.stdout | trim | int }}"
+    lab05_baseline: {}
+
+- name: Leer contador inicial antes de las peticiones de esta ejecución
+  ansible.builtin.uri:
+    url: "{{ lab05_thanos }}/api/v1/query?query={{ lab05_promql | urlencode }}"
+    headers: {Authorization: "Bearer {{ lab05_thanos_bearer }}"}
+    validate_certs: false
+    return_content: true
+    timeout: 20
+  register: lab05_before
+  no_log: true
+
+- name: Exigir esquema válido del contador inicial
+  ansible.builtin.assert:
+    that:
+      - lab05_before.json.status == 'success'
+      - lab05_before.json.data.resultType == 'vector'
+    quiet: true
+
+- name: Guardar valores iniciales por código HTTP
+  ansible.builtin.set_fact:
+    lab05_baseline: "{{ lab05_baseline | combine({item.metric.response_code: item.value[1] | float}) }}"
+  loop: "{{ lab05_before.json.data.result }}"
+  no_log: true
+
+# --- Paso 2 · Generar tráfico -------------------------------------------------
+- name: Petición sin credencial
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 5 · sin credencial"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 401
+    http_cabeceras:
+      User-Agent: "{{ lab05_ua }}-401"
+
+- name: Guardar el request-id devuelto realmente por el Gateway
+  ansible.builtin.set_fact:
+    lab05_response_rid: "{{ comun_http.x_request_id | default('') }}"
+
+- name: Exigir request-id de la respuesta para correlacionar el access log
+  ansible.builtin.assert:
+    that: lab05_response_rid | length > 0
+    quiet: true
+
+# --- Paso 6 · Access log ------------------------------------------------------
+- name: Esperar a que el access log del Gateway registre el 401
+  block:
+    - name: Leer el log del Gateway hasta ver la línea JSON del 401
+      kubernetes.core.k8s_log:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ wk_gateway }}-{{ gateway_class }}"
+        namespace: "{{ wk_ns_gateway }}"
+        since_seconds: 600
+      register: lab05_log
+      vars:
+        lab05_lineas_401: >-
+          {{ lab05_log.log_lines | default([]) | select('search', lab05_ua ~ '-401')
+             | select('search', '"response_code":"?401') | list }}
+      until: lab05_lineas_401 | length > 0
+      retries: 12
+      delay: 5
+  rescue:
+    - name: Fallar si el access log no registra el 401
+      ansible.builtin.fail:
+        msg: >-
+          El log de {{ wk_gateway }}-{{ gateway_class }} no tiene una línea JSON con response_code 401 y
+          user_agent {{ lab05_ua }}-401. Revisa el meshConfig (accessLogFile/accessLogEncoding) y la Telemetry
+          {{ lab05_telemetry_nombre }}.
+
+- name: Correlacionar JSON del 401 con el request-id recibido
+  ansible.builtin.assert:
+    that:
+      - lab05_401_json.response_code | int == 401
+      - lab05_401_json.request_id == lab05_response_rid
+      - lab05_401_json.upstream_host is none
+      - lab05_401_json.route_name == wk_ns_app ~ '.api-route-' ~ lab_id ~ '.0'
+    quiet: true
+  vars:
+    lab05_401_json: "{{ lab05_log.log_lines | select('search', lab05_ua ~ '-401') | select('search', '\"response_code\":\"?401') | first | from_json }}"
+
+- name: Pedir el token de alice a Keycloak
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: alice
+
+- name: Petición con JWT (espera a la ventana si la cuota previa está agotada)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 5 · token de alice"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 200
+    http_no_log: true
+    http_json_contract: "{{ wk_bank_json_contract }}"
+    http_cabeceras:
+      Authorization: "Bearer {{ wk_token }}"
+      User-Agent: "{{ lab05_ua }}-200"
+
+- name: Agotar la cuota para provocar el 429
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_cuota
+  vars:
+    cuota_url: "{{ wk_api_url }}"
+    cuota_cabeceras:
+      Authorization: "Bearer {{ wk_token }}"
+      User-Agent: "{{ lab05_ua }}-cuota"
+
+- name: Esperar a que el access log registre el 429
+  block:
+    - name: Leer el log del Gateway hasta ver la línea JSON del 429
+      kubernetes.core.k8s_log:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ wk_gateway }}-{{ gateway_class }}"
+        namespace: "{{ wk_ns_gateway }}"
+        since_seconds: 600
+      register: lab05_log
+      vars:
+        lab05_lineas_429: >-
+          {{ lab05_log.log_lines | default([]) | select('search', lab05_ua ~ '-cuota')
+             | select('search', '"response_code":"?429') | list }}
+      until: lab05_lineas_429 | length > 0
+      retries: 12
+      delay: 5
+  rescue:
+    - name: Fallar si el access log no registra el 429
+      ansible.builtin.fail:
+        msg: "El log del Gateway no registra el 429 de {{ lab05_ua }}-cuota."
+
+- name: Comprobar el contenido del access log (401 y 429 sin upstream, 200 filtrados)
+  ansible.builtin.assert:
+    that:
+      - lab05_lineas_200 | length == 0
+      - lab05_linea_429.upstream_host is none
+      - lab05_linea_429.route_name == wk_ns_app ~ '.api-route-' ~ lab_id ~ '.0'
+      - lab05_linea_429.request_id | length > 0
+    fail_msg: >-
+      Access log inesperado: 200 registrados={{ lab05_lineas_200 | length }} (el filtro
+      «{{ lab05_telemetry_filtro }}» debe excluirlos), línea del 429={{ lab05_linea_429 | to_json }}.
+    quiet: true
+  vars:
+    lab05_lineas_200: >-
+      {{ lab05_log.log_lines | select('search', lab05_ua ~ '-200') | select('search', '"response_code":"?200') | list }}
+    lab05_linea_429: >-
+      {{ lab05_log.log_lines | select('search', lab05_ua ~ '-cuota') | select('search', '"response_code":"?429')
+         | first | from_json }}
+
+# --- Paso 3 · Métricas en Thanos ---------------------------------------------
+- name: Esperar a las series istio_requests_total del Gateway (200, 401 y 429)
+  block:
+    - name: Consultar Thanos por response_code en {{ wk_ns_gateway }}
+      ansible.builtin.uri:
+        url: "{{ lab05_thanos }}/api/v1/query?query={{ lab05_promql | urlencode }}"
+        headers:
+          Authorization: "Bearer {{ lab05_thanos_bearer }}"
+        validate_certs: false
+        timeout: 20
+        return_content: true
+      register: lab05_prom
+      vars:
+        lab05_metric_deltas: >-
+          {{ lab05_prom.json.data.result | default([]) }}
+      until:
+        - lab05_prom.json.status | default('') == 'success'
+        - lab05_prom.json.data.resultType | default('') == 'vector'
+        - lab05_metric_deltas | selectattr('metric.response_code', 'equalto', '200') | list | length == 1
+        - lab05_metric_deltas | selectattr('metric.response_code', 'equalto', '401') | list | length == 1
+        - lab05_metric_deltas | selectattr('metric.response_code', 'equalto', '429') | list | length == 1
+        - (lab05_metric_deltas | selectattr('metric.response_code', 'equalto', '200') | first).value[1] | float > lab05_baseline.get('200', 0) | float
+        - (lab05_metric_deltas | selectattr('metric.response_code', 'equalto', '401') | first).value[1] | float > lab05_baseline.get('401', 0) | float
+        - (lab05_metric_deltas | selectattr('metric.response_code', 'equalto', '429') | first).value[1] | float > lab05_baseline.get('429', 0) | float
+      retries: "{{ lab05_metricas_reintentos }}"
+      delay: 10
+      no_log: true
+  rescue:
+    - name: Fallar si faltan series en Thanos
+      ansible.builtin.fail:
+        msg: >-
+          Thanos no devuelve istio_requests_total de {{ wk_ns_gateway }} con los códigos {{ lab05_codigos_esperados }}
+          (HTTP {{ lab05_prom.status | default('?') }}, códigos vistos
+          {{ lab05_prom.json.data.result | default([]) | map(attribute='metric.response_code') | list }}).
+          Revisa el PodMonitor istio-pod-monitor y user workload monitoring.
+
+# --- Paso 5 · Trazas en Tempo --------------------------------------------------
+# Se consulta desde el pod bank-api con el token de SU ServiceAccount: el lector
+# del tenant dev está enlazado a system:authenticated, así que ningún secreto
+# sale de la máquina de control.
+- name: Comprobar que Tempo recibe trazas del Gateway del participante
+  when: lab05_tempo_validar | bool
+  block:
+    - name: Localizar el pod bank-api
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ wk_ns_app }}"
+        label_selectors:
+          - app=bank-api
+        field_selectors:
+          - status.phase=Running
+      register: lab05_pod
+
+    - name: Buscar en Tempo trazas del servicio {{ wk_gateway }}-{{ gateway_class }}.{{ wk_ns_gateway }}
+      kubernetes.core.k8s_exec:
+        namespace: "{{ wk_ns_app }}"
+        pod: "{{ lab05_pod.resources[0].metadata.name }}"
+        command: >-
+          python3 -c {{ lookup('ansible.builtin.file', 'tempo-query.py') | quote }}
+          {{ ('https://tempo-' ~ lab05_tempo_instancia ~ '-gateway.' ~ lab05_tempo_namespace ~ '.svc.cluster.local:8080/api/traces/v1/' ~ lab05_tempo_tenant ~ '/tempo/api/search') | quote }}
+          {{ lab05_started | int }} {{ (wk_gateway ~ '-' ~ gateway_class ~ '.' ~ wk_ns_gateway) | quote }}
+      register: lab05_tempo
+      changed_when: false
+      failed_when: false
+      until:
+        - lab05_tempo.rc | default(lab05_tempo.return_code | default(1)) == 0
+        - >-
+          (lab05_tempo.stdout | default('{}', true) | from_json).get('traces', []) | length > 0
+          or (lab05_tempo.stdout | default('{}', true) | from_json).get('httpError', 0) in [400,401,403,404,405,422]
+      retries: "{{ lab05_tempo_reintentos }}"
+      delay: 10
+
+    - name: Comprobar que hay trazas en Tempo
+      ansible.builtin.assert:
+        that:
+          - lab05_tempo.rc | default(lab05_tempo.return_code | default(1)) == 0
+          - (lab05_tempo.stdout | from_json) is mapping
+          - (lab05_tempo.stdout | from_json).get('httpError', 0) == 0
+          - (lab05_tempo.stdout | from_json).traces is sequence
+          - (lab05_tempo.stdout | from_json).traces | length > 0
+          - (lab05_tempo.stdout | from_json).traces | selectattr('traceID', 'defined') | list | length == (lab05_tempo.stdout | from_json).traces | length
+          - (lab05_tempo.stdout | from_json).traces | selectattr('startTimeUnixNano', 'defined') | list | length == (lab05_tempo.stdout | from_json).traces | length
+          - ((lab05_tempo.stdout | from_json).traces | map(attribute='startTimeUnixNano') | map('int') | min) >= (lab05_started | int) * 1000000000
+        fail_msg: >-
+          Tempo (tenant {{ lab05_tempo_tenant }}) no tiene trazas de {{ wk_gateway }}-{{ gateway_class }}.{{ wk_ns_gateway }}
+          después del inicio de esta ejecución: {{ lab05_tempo.stdout | default('') }} {{ lab05_tempo.stderr | default('') }}.
+          Revisa el meshConfig (tempo-otlp) y reinicia el Deployment del Gateway si se creó antes del tracing.
+        quiet: true
+
+- name: Correlacionar la traza de políticas con el request-id fresco de la respuesta
+  when: lab05_tempo_validar | bool
+  block:
+    - name: Buscar wasm-shim y comprobar Authorino descendiente sin asumir número de spans
+      kubernetes.core.k8s_exec:
+        namespace: "{{ wk_ns_app }}"
+        pod: "{{ lab05_pod.resources[0].metadata.name }}"
+        command: >-
+          python3 -c {{ lookup('ansible.builtin.file', 'tempo-query.py') | quote }}
+          {{ ('https://tempo-' ~ lab05_tempo_instancia ~ '-gateway.' ~ lab05_tempo_namespace ~ '.svc.cluster.local:8080/api/traces/v1/' ~ lab05_tempo_tenant ~ '/tempo/api/search') | quote }}
+          {{ lab05_started | int }} wasm-shim {{ lab05_response_rid | quote }}
+      register: lab05_policy_trace
+      changed_when: false
+      failed_when: false
+      until:
+        - lab05_policy_trace.rc | default(lab05_policy_trace.return_code | default(1)) == 0
+        - >-
+          (lab05_policy_trace.stdout | default('{}', true) | from_json).get('policyEvidence') is mapping
+          or (lab05_policy_trace.stdout | default('{}', true) | from_json).get('httpError', 0) in [400,401,403,404,405,422]
+      retries: "{{ lab05_tempo_reintentos }}"
+      delay: 10
+
+    - name: Exigir correlación y ancestry reales del wasm-shim al Check de Authorino
+      ansible.builtin.assert:
+        that:
+          - lab05_policy_trace.rc | default(lab05_policy_trace.return_code | default(1)) == 0
+          - lab05_policy_result.get('httpError', 0) == 0
+          - lab05_policy_result.get('policyEvidence') is mapping
+          - lab05_policy_result.policyEvidence.requestId == lab05_response_rid
+          - lab05_policy_result.policyEvidence.ancestryVerified | bool
+        fail_msg: >-
+          No se obtuvo la traza fresca muestreada del request-id {{ lab05_response_rid }}
+          con wasm-shim/kuadrant_filter y Authorino/Check descendiente:
+          {{ lab05_policy_result | to_json }}. Comprobar instrumentación y muestreo;
+          un HTTP correcto o una traza histórica no demuestra esta cadena.
+        quiet: true
+      vars:
+        lab05_policy_result: "{{ lab05_policy_trace.stdout | default('{}', true) | from_json }}"
+
+- name: Resumen del Lab 5
+  ansible.builtin.debug:
+    msg:
+      - "Lab 5 OK · {{ wk_api_url }}"
+      - "Access log: 401 y 429 en JSON (route_name {{ wk_ns_app }}.api-route-{{ lab_id }}.0, upstream_host null), 200 filtrados"
+      - "Thanos: istio_requests_total de {{ wk_ns_gateway }} con response_code {{ lab05_codigos_esperados | join(', ') }}"
+      - "Tempo: {{ ((lab05_tempo.stdout | from_json).traces | length) if lab05_tempo_validar | bool else 'no comprobado' }} trazas nuevas del Gateway"
+      - "Políticas: {{ ('wasm-shim/kuadrant_filter → Authorino/Check, request-id ' ~ lab05_response_rid) if lab05_tempo_validar | bool else 'no comprobado' }}"
+      - "HTTPRoute api-route-{{ lab_id }} etiquetada service=bank-api deployment=bank-api (dashboards de Grafana)"

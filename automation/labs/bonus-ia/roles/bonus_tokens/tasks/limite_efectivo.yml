@@ -1,0 +1,42 @@
+---
+- name: Leer el límite declarado en el CR Limitador
+  kubernetes.core.k8s_info:
+    api_version: limitador.kuadrant.io/v1alpha1
+    kind: Limitador
+    name: limitador
+    namespace: kuadrant-system
+  register: bonus_limitador_cr
+  until: bonus_limitador_cr.resources[0].spec.limits | default([]) | selectattr('namespace', 'equalto', wk_ns_app ~ '/llm-route-' ~ lab_id) | list | length > 0
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"
+
+- name: Localizar el pod del mock de IA para consultar la API interna
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ wk_ns_app }}"
+    label_selectors: [app=mock-llm]
+    field_selectors: [status.phase=Running]
+  register: bonus_pod
+
+- name: Leer los límites cargados en la API de Limitador sin exportar credenciales
+  kubernetes.core.k8s_exec:
+    namespace: "{{ wk_ns_app }}"
+    pod: "{{ bonus_pod.resources[0].metadata.name }}"
+    container: mock
+    command: "python3 -c {{ bonus_runtime_script | quote }}"
+  vars:
+    bonus_runtime_script: >-
+      import json,urllib.request,urllib.parse;
+      url={{ bonus_limitador_url | to_json }}+'/limits/'+urllib.parse.quote({{ (wk_ns_app ~ '/llm-route-' ~ lab_id) | to_json }},safe='');
+      print(json.dumps(json.load(urllib.request.urlopen(url,timeout=15))))
+  register: bonus_runtime
+  changed_when: false
+
+- name: Preparar las dos capas para comparar el límite
+  ansible.builtin.set_fact:
+    bonus_limites_cr: "{{ bonus_limitador_cr.resources[0].spec.limits | selectattr('namespace', 'equalto', wk_ns_app ~ '/llm-route-' ~ lab_id) | list }}"
+    bonus_limites_runtime: "{{ bonus_runtime.stdout | from_json }}"
+
+- name: Comprobar la cuota real antes de consumir tokens
+  ansible.builtin.import_tasks: limit_contract.yml

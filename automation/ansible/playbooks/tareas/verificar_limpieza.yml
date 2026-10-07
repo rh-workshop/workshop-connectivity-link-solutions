@@ -1,0 +1,20 @@
+---
+- name: Buscar namespaces, Services LoadBalancer y ClusterRoleBindings del participante
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    label_selectors:
+      - "workshop.user={{ lab_id }}"
+  loop:
+    - {v: v1, k: Namespace}
+    - {v: v1, k: Service}
+    - {v: rbac.authorization.k8s.io/v1, k: ClusterRoleBinding}
+  loop_control:
+    label: "{{ item.k }}"
+  register: limpieza_restos
+
+- name: Comprobar que no quedan restos
+  ansible.builtin.assert:
+    that: limpieza_restos.results | map(attribute='resources') | flatten | length == 0
+    fail_msg: "Quedan recursos de {{ lab_id }}: {{ limpieza_restos.results | map(attribute='resources') | flatten | map(attribute='metadata.name') | list }}"
+    success_msg: "No queda ningún recurso con workshop.user={{ lab_id }}."

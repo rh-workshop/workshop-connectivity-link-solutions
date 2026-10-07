@@ -1,0 +1,28 @@
+---
+- name: Leer el Secret bootstrap del admin de Keycloak (si no hay variables)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: "{{ keycloak_admin_secret }}"
+    namespace: "{{ keycloak_namespace }}"
+  register: kc_admin_secret
+  no_log: true
+  when:
+    - keycloak_admin_password | length == 0
+    - keycloak_admin_desde_secret | bool
+
+- name: Fijar las credenciales del admin de Keycloak
+  ansible.builtin.set_fact:
+    wk_kc_admin_usuario: >-
+      {{ keycloak_admin_usuario if keycloak_admin_usuario | length > 0
+         else (kc_admin_secret.resources[0].data.username | b64decode if kc_admin_secret.resources | default([]) | length > 0 else 'admin') }}
+    wk_kc_admin_password: >-
+      {{ keycloak_admin_password if keycloak_admin_password | length > 0
+         else (kc_admin_secret.resources[0].data.password | b64decode if kc_admin_secret.resources | default([]) | length > 0 else '') }}
+  no_log: true
+
+- name: Exigir la contraseña del admin de Keycloak
+  ansible.builtin.assert:
+    that: wk_kc_admin_password | length > 0
+    fail_msg: "Sin credenciales del admin de Keycloak: exporta KC_ADMIN_USER/KC_ADMIN_PASSWORD o usa ansible-vault."
+    quiet: true

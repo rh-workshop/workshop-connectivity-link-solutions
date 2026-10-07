@@ -1,0 +1,20 @@
+# Lab 11 · paso 10: alternativa fuera de RHCL. AuthorizationPolicy de Istio con
+# CIDR real (remoteIpBlocks = IP entregada por PROXY protocol); se evalúa antes
+# que Authorino.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: b2b-deny-ip-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ lab11_gateway }}
+  action: DENY
+  rules:
+    - from:
+        - source:
+            remoteIpBlocks: {{ [lab11_bloque] | to_json }}

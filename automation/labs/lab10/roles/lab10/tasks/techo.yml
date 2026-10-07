@@ -1,0 +1,133 @@
+---
+# Pasos 3 y 4 del lab: el techo overrides del Gateway deja la política de la
+# ruta en Overridden y corta con 429 en TODAS las rutas del Gateway; al
+# retirarlo, la política de la ruta vuelve a Enforced.
+- name: Aplicar el techo del Gateway (overrides)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: techo-global.yaml.j2
+
+- name: Operar con el techo y retirarlo siempre
+  block:
+    - name: Esperar al techo Enforced
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: RateLimitPolicy
+        espera_nombre: "techo-global-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Enforced
+
+    - name: Esperar a que la cuota de la ruta quede anulada (Overridden)
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: RateLimitPolicy
+        espera_nombre: "gobierno-rl-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_app }}"
+        espera_condicion: Enforced
+        espera_estado: "False"
+        espera_razon: Overridden
+
+    - name: Exigir dos 200 y el tercer 429 del techo en gobierno
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_cuota_exacta
+      vars:
+        cuota_url: "{{ wk_gob_url }}"
+        cuota_limite: "{{ lab10_techo }}"
+        cuota_ventana_segundos: 60
+        cuota_json_contract: "{{ lab10_http_contract }}"
+        cuota_cabeceras:
+          Authorization: "Bearer {{ lab10_token_m2m }}"
+
+    - name: Pedir un token de alice para bank-api
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: alice
+
+    - name: Exigir dos 200 y el tercer 429 del techo en bank-api
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_cuota_exacta
+      vars:
+        cuota_url: "{{ wk_api_url }}"
+        cuota_limite: "{{ lab10_techo }}"
+        cuota_ventana_segundos: 60
+        cuota_json_contract: "{{ wk_bank_json_contract }}"
+        cuota_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+  always:
+    - name: Retirar el techo (afecta a todas las rutas del Gateway)
+      kubernetes.core.k8s:
+        state: absent
+        api_version: kuadrant.io/v1
+        kind: RateLimitPolicy
+        name: "techo-global-{{ lab_id }}"
+        namespace: "{{ wk_ns_gateway }}"
+        wait: true
+
+- name: La cuota de la ruta vuelve a Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: RateLimitPolicy
+    espera_nombre: "gobierno-rl-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Enforced
+
+- name: Sin techo, gobierno vuelve a responder
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 10 · gobierno tras retirar el techo"
+    http_json_contract: "{{ lab10_http_contract }}"
+    http_url: "{{ wk_gob_url }}"
+    http_esperado: 200
+    http_intervalo: 2
+    http_no_log: true
+    http_cabeceras:
+      Authorization: "Bearer {{ lab10_token_m2m }}"
+
+- name: Cuatro peticiones seguidas bajo la cuota de la ruta
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_serie
+  vars:
+    serie_prueba: "Lab 10 · sin techo (cuota {{ lab10_cuota_ruta }}/min)"
+    serie_contenido: true
+    serie_url: "{{ wk_gob_url }}"
+    serie_n: 4
+    serie_cabeceras:
+      Authorization: "Bearer {{ lab10_token_m2m }}"
+
+- name: Validar el JSON de las cuatro respuestas sin techo
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_http_contrato
+  vars:
+    comun_http: "{{ lab10_respuesta }}"
+    http_json_contract: "{{ lab10_http_contract }}"
+    http_no_log: true
+  loop: "{{ comun_serie.results }}"
+  loop_control:
+    loop_var: lab10_respuesta
+    label: JSON sin techo
+
+- name: Comprobar cuatro 200
+  ansible.builtin.assert:
+    that: wk_serie_codigos | unique == [200]
+    fail_msg: "Sin techo se esperaban cuatro 200 y se obtuvo {{ wk_serie_codigos | join(' ') }}"
+    quiet: true

@@ -1,0 +1,34 @@
+---
+# Contrato de la API Prometheus; reutilizado por consultas y rondas de cuota.
+- name: Exigir una respuesta Prometheus vectorial válida
+  ansible.builtin.assert:
+    that:
+      - lab12_promql.status == 200
+      - lab12_promql.json.status == 'success'
+      - lab12_promql.json.data.resultType == 'vector'
+      - lab12_promql.json.data.result is sequence
+      - (promql_allow_empty | default(false) | bool) or lab12_promql.json.data.result | length > 0
+    fail_msg: La consulta PromQL no devolvió un vector válido de series.
+    quiet: true
+  no_log: true
+
+- name: Comprobar etiquetas y valores finitos de cada serie
+  ansible.builtin.assert:
+    that:
+      - item.metric.destination_service_name | default('') | length > 0
+      - item.value | length == 2
+      - item.value[1] is string
+      - item.value[1] is match('^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$')
+      - not (promql_codigos | default(false) | bool) or item.metric.response_code | default('') is match('^[1-5][0-9][0-9]$')
+      - not (promql_fraccion | default(false) | bool) or (item.value[1] | float >= 0 and item.value[1] | float <= 1)
+    fail_msg: Una serie PromQL tiene etiquetas incompletas o un valor inválido.
+    quiet: true
+  loop: "{{ lab12_promql.json.data.result }}"
+  no_log: true
+
+- name: Exigir una serie del backend sobre el que se genera tráfico
+  ansible.builtin.assert:
+    that: lab12_promql.json.data.result | selectattr('metric.destination_service_name', 'equalto', lab12_backend) | list | length > 0
+    fail_msg: "Las métricas recibidas no incluyen el backend seleccionado {{ lab12_backend }}."
+    quiet: true
+  when: lab12_promql.json.data.result | length > 0

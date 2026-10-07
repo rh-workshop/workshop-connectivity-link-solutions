@@ -1,0 +1,99 @@
+---
+# Verificación de solo lectura: lo mismo que comprueba el instructor antes del Lab 1.
+
+- name: Esperar a que cada operador esté Succeeded
+  ansible.builtin.include_tasks: esperar_csv.yml
+  loop: "{{ plataforma_operadores_activos }}"
+  loop_control:
+    loop_var: operador
+    label: "{{ operador.nombre }}"
+  vars:
+    csv_namespace: "{{ operador.namespace }}"
+    csv_prefijo: "{{ operador.csv_prefijo }}"
+
+- name: Esperar a las dependencias de RHCL (Authorino, Limitador, DNS Operator)
+  ansible.builtin.include_tasks: esperar_csv.yml
+  loop: "{{ plataforma_csv_dependencias }}"
+  loop_control:
+    loop_var: dependencia
+  vars:
+    csv_namespace: kuadrant-system
+    csv_prefijo: "{{ dependencia }}"
+
+- name: Esperar al plano de control Istio (Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: sailoperator.io/v1
+    espera_kind: Istio
+    espera_nombre: default
+    espera_condicion: Ready
+  when: gateway_class == 'istio'
+
+- name: Esperar a la GatewayClass aceptada
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: gateway.networking.k8s.io/v1
+    espera_kind: GatewayClass
+    espera_nombre: "{{ gateway_class }}"
+    espera_condicion: Accepted
+
+- name: Esperar al CR Kuadrant (Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1beta1
+    espera_kind: Kuadrant
+    espera_nombre: kuadrant
+    espera_namespace: kuadrant-system
+    espera_condicion: Ready
+
+- name: Esperar al ClusterIssuer del taller (Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: ClusterIssuer
+    espera_nombre: "{{ tls_issuer_name }}"
+    espera_condicion: Ready
+
+- name: Esperar a la instancia de Keycloak (Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: k8s.keycloak.org/v2beta1
+    espera_kind: Keycloak
+    espera_nombre: "{{ keycloak_cr_nombre }}"
+    espera_namespace: "{{ keycloak_namespace }}"
+    espera_condicion: Ready
+
+- name: Consultar los ClusterRoles del taller
+  kubernetes.core.k8s_info:
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    label_selectors:
+      - workshop.module=connectivity-link
+  register: plataforma_roles
+
+- name: Comprobar que existen los ClusterRoles que enlaza el rol tenant
+  ansible.builtin.assert:
+    that: item in (plataforma_roles.resources | map(attribute='metadata.name') | list)
+    fail_msg: "Falta el ClusterRole {{ item }}: ejecuta plataforma.yml con plataforma_verificar_solo=false."
+    quiet: true
+  loop:
+    - workshop-gatewayclass-view
+    - workshop-policies-edit
+    - workshop-operator-view
+
+- name: Resumen de la plataforma
+  ansible.builtin.debug:
+    msg:
+      - "Modo: {{ 'solo verificación' if plataforma_verificar_solo | bool else 'instalar lo que falte' }}"
+      - "Operadores: {{ plataforma_versiones | default({}) | dict2items | map(attribute='value') | join(', ') }}"
+      - "Kuadrant Ready · GatewayClass {{ gateway_class }} Accepted · ClusterIssuer {{ tls_issuer_name }} Ready · Keycloak Ready"

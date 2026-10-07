@@ -1,0 +1,47 @@
+---
+# Repo Git efímero en el clúster: Deployment + Service git-politicas en el
+# namespace de la aplicación. Argo CD lo lee por smart HTTP.
+- name: Desplegar el servidor Git del laboratorio
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: git-politicas.yaml.j2
+
+- name: Esperar a que el servidor Git termine de desplegarse (un solo pod, listo)
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: git-politicas
+    namespace: "{{ wk_ns_app }}"
+  register: lab06_git_deploy
+  vars:
+    lab06_d: "{{ lab06_git_deploy.resources | first | default({}) }}"
+  until:
+    - lab06_d.status.observedGeneration | default(-1) == lab06_d.metadata.generation | default(0)
+    - lab06_d.status.replicas | default(0) == 1
+    - lab06_d.status.updatedReplicas | default(0) == 1
+    - lab06_d.status.readyReplicas | default(0) == 1
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"
+
+- name: Localizar el pod del servidor Git
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ wk_ns_app }}"
+    label_selectors:
+      - app=git-politicas
+    field_selectors:
+      - status.phase=Running
+  register: lab06_pod_git
+  until: >-
+    lab06_pod_git.resources | selectattr('metadata.deletionTimestamp', 'undefined') | list | length > 0
+  retries: "{{ k8s_espera_reintentos }}"
+  delay: "{{ k8s_espera_intervalo }}"
+
+- name: Fijar el pod y la URL que leerá Argo CD
+  ansible.builtin.set_fact:
+    lab06_pod: "{{ (lab06_pod_git.resources | selectattr('metadata.deletionTimestamp', 'undefined') | first).metadata.name }}"
+    lab06_repo_argocd: "http://git-politicas.{{ wk_ns_app }}.svc.cluster.local:8080/politicas.git"

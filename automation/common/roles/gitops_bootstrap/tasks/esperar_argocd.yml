@@ -1,0 +1,19 @@
+---
+- name: Esperar a Argo CD Available
+  block:
+    - name: Consultar la instancia Argo CD hasta Available
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1beta1
+        kind: ArgoCD
+        name: "{{ gitops_bootstrap_argocd_instancia }}"
+        namespace: "{{ gitops_bootstrap_argocd_namespace }}"
+      register: gitops_bootstrap_argocd
+      until: (gitops_bootstrap_argocd.resources | first | default({})).status.phase | default('') == 'Available'
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Fallar si Argo CD no está disponible
+      ansible.builtin.fail:
+        msg: >-
+          ArgoCD {{ gitops_bootstrap_argocd_namespace }}/{{ gitops_bootstrap_argocd_instancia }} no está Available.
+          Estado: {{ (gitops_bootstrap_argocd.resources | first | default({})).status | default('no existe') | to_json }}.

@@ -1,0 +1,47 @@
+---
+- name: Exigir autorización explícita para habilitar el plugin
+  ansible.builtin.assert:
+    that: not console_plugin_verificar_solo | bool
+    quiet: true
+
+- name: Releer la consola inmediatamente antes del CAS
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: console_plugin_console
+
+- name: Rechazar habilitación sobre consola ausente, duplicada o gestionada por Argo CD
+  ansible.builtin.assert:
+    that:
+      - console_plugin_console.resources | length == 1
+      - console_plugin_console.resources[0].metadata.name == 'cluster'
+      - console_plugin_console.resources[0].metadata.uid | length > 0
+      - console_plugin_console.resources[0].metadata.resourceVersion | length > 0
+      - console_plugin_console.resources[0].spec.plugins | default([]) | type_debug == 'list'
+      - console_plugin_console.resources[0].spec.plugins | default([]) | select('equalto', console_plugin_deployment) | list | length <= 1
+      - "'argocd.argoproj.io/tracking-id' not in (console_plugin_console.resources[0].metadata.annotations | default({}))"
+      - "'argocd.argoproj.io/installation-id' not in (console_plugin_console.resources[0].metadata.annotations | default({}))"
+      - "'argocd.argoproj.io/instance' not in (console_plugin_console.resources[0].metadata.labels | default({}))"
+      - console_plugin_console.resources[0].metadata.managedFields | default([]) | selectattr('manager', 'defined') | selectattr('manager', 'search', '(?i)argocd') | list | length == 0
+      - console_plugin_console.resources[0].metadata.ownerReferences | default([]) | selectattr('kind', 'equalto', 'Application') | list | length == 0
+    quiet: true
+
+- name: Preparar CAS y agregar únicamente el plugin faltante
+  ansible.builtin.set_fact:
+    console_plugin_enable_patch: >-
+      {{ [{'op':'test', 'path':'/metadata/uid', 'value':console_plugin_console.resources[0].metadata.uid},
+          {'op':'test', 'path':'/metadata/resourceVersion', 'value':console_plugin_console.resources[0].metadata.resourceVersion}]
+         + ([{'op':'test', 'path':'/spec/plugins', 'value':console_plugin_console.resources[0].spec.plugins},
+             {'op':'add', 'path':'/spec/plugins/-', 'value':console_plugin_deployment}]
+            if console_plugin_console.resources[0].spec.plugins is defined else
+            [{'op':'test', 'path':'/spec', 'value':console_plugin_console.resources[0].spec},
+             {'op':'add', 'path':'/spec/plugins', 'value':[console_plugin_deployment]}]) }}
+
+- name: Añadir el plugin mediante CAS sin reemplazar la lista existente
+  kubernetes.core.k8s_json_patch:
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+    patch: "{{ console_plugin_enable_patch }}"
+  when: console_plugin_deployment not in (console_plugin_console.resources[0].spec.plugins | default([]))

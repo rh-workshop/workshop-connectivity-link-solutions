@@ -1,0 +1,74 @@
+---
+# Lo que el participante hace con oc get secret … | base64 -d y openssl:
+# certificados de los socios en ficheros locales y una CA ajena para la prueba
+# negativa (community.crypto). Fuera del repositorio, claves en 0600.
+- name: Crear la carpeta local de certificados
+  ansible.builtin.file:
+    path: "{{ lab11_dir_local }}"
+    state: directory
+    mode: "0700"
+
+- name: Leer los Secrets de los certificados de los socios
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: "{{ item }}-{{ lab_id }}"
+    namespace: "{{ wk_ns_gateway }}"
+  loop: [socio-acme, socio-otro]
+  register: lab11_socios_secret
+  no_log: true
+
+- name: Escribir certificado y clave de cada socio
+  ansible.builtin.copy:
+    content: "{{ item.0.resources[0].data[item.1.dato] | b64decode }}"
+    dest: "{{ lab11_dir_local }}/{{ item.0.item }}.{{ item.1.ext }}"
+    mode: "0600"
+  loop: "{{ lab11_socios_secret.results | product([{'dato': 'tls.crt', 'ext': 'crt'}, {'dato': 'tls.key', 'ext': 'key'}]) | list }}"
+  loop_control:
+    label: "{{ item.0.item }}.{{ item.1.ext }}"
+  no_log: true
+
+- name: Clave de la CA ajena y del certificado falso
+  community.crypto.openssl_privatekey:
+    path: "{{ lab11_dir_local }}/{{ item }}.key"
+    type: ECC
+    curve: secp256r1
+    mode: "0600"
+  loop: [otra-ca, falso]
+
+- name: CSR de la CA ajena
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ lab11_dir_local }}/otra-ca.key"
+    common_name: intruso
+    organization_name: Otra CA
+    basic_constraints: ["CA:TRUE"]
+    basic_constraints_critical: true
+    key_usage: [keyCertSign, cRLSign]
+  register: lab11_csr_otra_ca
+  changed_when: false
+
+- name: Certificado autofirmado de la CA ajena
+  community.crypto.x509_certificate:
+    path: "{{ lab11_dir_local }}/otra-ca.crt"
+    privatekey_path: "{{ lab11_dir_local }}/otra-ca.key"
+    csr_content: "{{ lab11_csr_otra_ca.csr }}"
+    provider: selfsigned
+    selfsigned_not_after: "+30d"
+
+- name: CSR del socio falso (clientAuth)
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ lab11_dir_local }}/falso.key"
+    common_name: socio-falso
+    organization_name: Falsa
+    extended_key_usage: [clientAuth]
+  register: lab11_csr_falso
+  changed_when: false
+
+- name: Certificado del socio falso firmado por la CA ajena
+  community.crypto.x509_certificate:
+    path: "{{ lab11_dir_local }}/falso.crt"
+    csr_content: "{{ lab11_csr_falso.csr }}"
+    provider: ownca
+    ownca_path: "{{ lab11_dir_local }}/otra-ca.crt"
+    ownca_privatekey_path: "{{ lab11_dir_local }}/otra-ca.key"
+    ownca_not_after: "+30d"

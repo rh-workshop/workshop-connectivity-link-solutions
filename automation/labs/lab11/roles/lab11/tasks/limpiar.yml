@@ -1,0 +1,129 @@
+---
+# Orden: políticas y rutas → DNSPolicy (y esperar a que el DNS Operator retire
+# los DNSRecord de Route 53) → TLSPolicy → Gateway (y esperar a que desaparezca
+# el Service LoadBalancer: el ELB cuesta dinero) → PKI, Secrets y ConfigMaps.
+- name: Calcular los nombres del Gateway B2B
+  ansible.builtin.set_fact:
+    lab11_gateway: "b2b-gw-{{ lab_id }}"
+
+- name: Borrar AuthorizationPolicy de Istio y override del Gateway si quedaron
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+  loop:
+    - {v: security.istio.io/v1, k: AuthorizationPolicy, n: "b2b-deny-ip-{{ lab_id }}"}
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "b2b-gw-ip-{{ lab_id }}"}
+    - {v: networking.istio.io/v1alpha3, k: EnvoyFilter, n: "b2b-mtls-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar AuthPolicies, rutas y backend eco
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_app }}"
+    wait: true
+  loop:
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "socios-auth-{{ lab_id }}"}
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "b2b-auth-{{ lab_id }}"}
+    - {v: gateway.networking.k8s.io/v1, k: HTTPRoute, n: "socios-route-{{ lab_id }}"}
+    - {v: gateway.networking.k8s.io/v1, k: HTTPRoute, n: "b2b-route-{{ lab_id }}"}
+    - {v: apps/v1, k: Deployment, n: b2b-api}
+    - {v: v1, k: Service, n: b2b-api}
+    - {v: v1, k: ConfigMap, n: b2b-api-src}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar la DNSPolicy del Gateway B2B
+  kubernetes.core.k8s:
+    state: absent
+    api_version: kuadrant.io/v1
+    kind: DNSPolicy
+    name: "b2b-dns-{{ lab_id }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+    wait_timeout: 300
+
+- name: Esperar a que el DNS Operator retire los DNSRecord de los dos listeners
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_borrado
+  vars:
+    borrado_api_version: kuadrant.io/v1alpha1
+    borrado_kind: DNSRecord
+    borrado_namespace: "{{ wk_ns_gateway }}"
+    borrado_nombre: "{{ lab11_gateway }}-{{ item }}"
+  loop: [https, socios]
+
+- name: Borrar la TLSPolicy y el Gateway B2B
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+    wait_timeout: 300
+  loop:
+    - {v: kuadrant.io/v1, k: TLSPolicy, n: "b2b-tls-{{ lab_id }}"}
+    - {v: gateway.networking.k8s.io/v1, k: Gateway, n: "{{ lab11_gateway }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Esperar a que desaparezca el Service LoadBalancer del Gateway B2B (libera el ELB)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_borrado
+  vars:
+    borrado_api_version: v1
+    borrado_kind: Service
+    borrado_namespace: "{{ wk_ns_gateway }}"
+    borrado_selector: "gateway.networking.k8s.io/gateway-name={{ lab11_gateway }}"
+
+- name: Borrar Certificates e Issuers de la PKI de socios y de los listeners
+  kubernetes.core.k8s:
+    state: absent
+    api_version: cert-manager.io/v1
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_gateway }}"
+    wait: true
+  loop:
+    - {k: Certificate, n: "{{ lab11_gateway }}-https"}
+    - {k: Certificate, n: "{{ lab11_gateway }}-socios"}
+    - {k: Certificate, n: "socio-acme-{{ lab_id }}"}
+    - {k: Certificate, n: "socio-otro-{{ lab_id }}"}
+    - {k: Certificate, n: "b2b-ca-{{ lab_id }}"}
+    - {k: Issuer, n: "b2b-ca-{{ lab_id }}"}
+    - {k: Issuer, n: "b2b-bootstrap-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar los Secrets que cert-manager deja y los ConfigMaps de la CA
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_gateway }}"
+  loop:
+    - {k: Secret, n: "{{ lab11_gateway }}-tls"}
+    - {k: Secret, n: "{{ lab11_gateway }}-socios-tls"}
+    - {k: Secret, n: "socio-acme-{{ lab_id }}"}
+    - {k: Secret, n: "socio-otro-{{ lab_id }}"}
+    - {k: Secret, n: "b2b-ca-{{ lab_id }}"}
+    - {k: ConfigMap, n: "b2b-client-ca-{{ lab_id }}"}
+    - {k: ConfigMap, n: "{{ lab11_gateway }}-infra"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Borrar los certificados locales
+  ansible.builtin.file:
+    path: "{{ lab11_dir_local }}"
+    state: absent

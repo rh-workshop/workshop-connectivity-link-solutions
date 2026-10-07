@@ -1,0 +1,47 @@
+---
+- name: Esperar al Issuer Ready para validación previa o renovación
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: Issuer
+    espera_nombre: "{{ ingress_certificate_issuer }}"
+    espera_namespace: "{{ ingress_certificate_namespace }}"
+    espera_condicion: Ready
+
+- name: Esperar al Certificate Ready antes de inspeccionar su material TLS
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: Certificate
+    espera_nombre: "{{ ingress_certificate_nombre }}"
+    espera_namespace: "{{ ingress_certificate_namespace }}"
+    espera_condicion: Ready
+
+- name: Leer el Secret TLS sin exponer la clave
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: "{{ ingress_certificate_secret }}"
+    namespace: "{{ ingress_certificate_namespace }}"
+  register: ingress_tls_secret
+  no_log: true
+
+- name: Validar SAN, expiración, correspondencia de clave y cadena de confianza
+  ansible.builtin.command:
+    argv: >-
+      {{ [ansible_playbook_python, role_path ~ '/files/ingress_tls.py', 'validate',
+          '--domain', ingress_domain, '--bundle', ingress_certificate_trust_bundle,
+          '--min-days', ingress_certificate_min_days | string]
+         + ([] if ingress_certificate_incluir_dominio | bool else ['--root-optional']) }}
+    stdin: "{{ ingress_tls_secret.resources[0] | to_json }}"
+  register: ingress_tls_validation
+  changed_when: false
+  no_log: true
+
+- name: Registrar únicamente evidencia pública de validación TLS
+  ansible.builtin.set_fact:
+    ingress_tls_evidence: "{{ ingress_tls_validation.stdout | from_json }}"

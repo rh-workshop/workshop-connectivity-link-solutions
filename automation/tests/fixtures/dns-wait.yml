@@ -1,0 +1,30 @@
+# Casos sintéticos del contrato DNS; no contienen destinos reales ni credenciales.
+cases:
+  - name: default-checks-authoritative-servers-without-mTLS
+    vars: {}
+    authoritative: true
+    client_certificate: false
+  - name: local-dns-exception-still-uses-https
+    vars:
+      dns_verificar_autoritativos: false
+    authoritative: false
+    client_certificate: false
+  - name: b2b-mTLS-checks-authoritative-servers-and-uses-client-certificate
+    vars:
+      dns_client_cert: fixture-client.crt
+      dns_client_key: fixture-client.key
+    authoritative: true
+    client_certificate: true
+tls_cases:
+  - name: no-client-certificate
+    expected_status: -1
+    require_tls_alert: true
+  - name: untrusted-client-ca
+    expected_status: -1
+    require_tls_alert: true
+  - name: trusted-ca-wrong-organization
+    expected_status: 403
+    require_tls_alert: false
+  - name: valid-client-certificate-positive-control
+    expected_status: 200
+    require_tls_alert: false

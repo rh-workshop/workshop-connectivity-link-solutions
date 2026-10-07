@@ -1,0 +1,230 @@
+---
+- name: Comprobar la propiedad de la plataforma antes de cualquier escritura
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: true
+
+# Modo instalación (lab05_plataforma_verificar_solo=false): crea SOLO lo que
+# falte de la observabilidad del Lab 5. Regla: lo que ya existe no se modifica;
+# los CR compartidos (Istio, Kuadrant, Authorino, plugin) solo se parchean si
+# les falta el bloque del Lab 5, y si tienen uno distinto se falla sin tocar.
+
+- name: Seleccionar los operadores de observabilidad que aplican
+  ansible.builtin.set_fact:
+    lab05_operadores_activos: >-
+      {{ lab05_operadores | rejectattr('solo_si_grafana', 'defined') | list
+         + (lab05_operadores | selectattr('solo_si_grafana', 'defined') | list if lab05_grafana_instalar | bool else []) }}
+
+- name: Suscribir los operadores que falten
+  ansible.builtin.include_tasks: operador.yml
+  loop: "{{ lab05_operadores_activos }}"
+  loop_control:
+    loop_var: lab05_operador
+    label: "{{ lab05_operador.nombre }}"
+
+- name: Esperar a los operadores antes de crear sus CR
+  ansible.builtin.include_role:
+    name: plataforma
+    tasks_from: esperar_csv
+  loop: "{{ lab05_operadores_activos }}"
+  loop_control:
+    loop_var: lab05_operador
+    label: "{{ lab05_operador.nombre }}"
+  vars:
+    csv_namespace: "{{ lab05_operador.namespace }}"
+    csv_prefijo: "{{ lab05_operador.csv_prefijo }}"
+
+# --- 1 · User workload monitoring -------------------------------------------
+- name: Leer cluster-monitoring-config
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: cluster-monitoring-config
+    namespace: openshift-monitoring
+  register: lab05_cmc
+
+- name: Crear cluster-monitoring-config con enableUserWorkload (no existía)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cluster-monitoring-config
+        namespace: openshift-monitoring
+      data:
+        config.yaml: |
+          enableUserWorkload: true
+  when: lab05_cmc.resources | length == 0
+
+- name: No reescribir una configuración de monitorización ajena
+  ansible.builtin.assert:
+    that: >-
+      lab05_cmc.resources | length == 0 or
+      (lab05_cmc.resources[0].data['config.yaml'] | default('{}') | from_yaml).enableUserWorkload | default(false) | bool
+    fail_msg: >-
+      cluster-monitoring-config ya existe con otra configuración y sin enableUserWorkload: true. No se modifica
+      automáticamente para no perder esos ajustes; añade la clave a mano y relanza.
+    quiet: true
+
+# --- 2 · Tempo, colector, UIPlugin y Telemetry de malla ---------------------
+- name: Crear lo que falte de Tempo, el colector OTLP y el UIPlugin
+  ansible.builtin.include_tasks: crear_si_falta.yml
+  loop: "{{ lookup('ansible.builtin.template', 'plataforma-tempo.yaml.j2') | from_yaml_all | select | list }}"
+  loop_control:
+    loop_var: lab05_obj
+    label: "{{ lab05_obj.kind }}/{{ lab05_obj.metadata.name }}"
+
+# --- 3 · CR Istio: tracing y access log JSON ---------------------------------
+- name: Leer el CR Istio y el Deployment del plugin de consola
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ item.ns | default(omit) }}"
+  loop:
+    - {v: sailoperator.io/v1, k: Istio, n: default}
+    - {v: kuadrant.io/v1beta1, k: Kuadrant, n: kuadrant, ns: kuadrant-system}
+    - {v: operator.authorino.kuadrant.io/v1beta1, k: Authorino, n: authorino, ns: kuadrant-system}
+    - {v: apps/v1, k: Deployment, n: kuadrant-console-plugin, ns: kuadrant-system}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+  register: lab05_cr
+
+- name: Calcular qué bloques del Lab 5 faltan en los CR compartidos
+  ansible.builtin.set_fact:
+    lab05_i_mesh: "{{ (lab05_cr.results[0].resources | first | default({})).spec['values'].meshConfig | default({}) }}"
+    lab05_i_obs: "{{ (lab05_cr.results[1].resources | first | default({})).spec.observability | default({}) }}"
+    lab05_i_auth: "{{ (lab05_cr.results[2].resources | first | default({})).spec.tracing | default({}) }}"
+    lab05_i_plugin: "{{ ((lab05_cr.results[3].resources | first | default({})).spec.template.spec.containers | default([{}])) | first }}"
+
+- name: No pisar otros proveedores de extensión del meshConfig
+  ansible.builtin.assert:
+    that: >-
+      lab05_i_mesh.extensionProviders | default([]) | length == 0 or
+      lab05_i_mesh.extensionProviders | selectattr('name', 'equalto', 'tempo-otlp') | list | length == 1
+    fail_msg: >-
+      El CR Istio ya tiene extensionProviders sin tempo-otlp ({{ lab05_i_mesh.extensionProviders | default([]) | map(attribute='name') | list }}).
+      Un merge-patch sustituiría la lista entera: añade tempo-otlp a mano.
+    quiet: true
+  when:
+    - gateway_class == 'istio'
+    - lab05_cr.results[0].resources | length > 0
+
+- name: Añadir tracing (tempo-otlp) y access log JSON al CR Istio
+  kubernetes.core.k8s:
+    state: patched
+    api_version: sailoperator.io/v1
+    kind: Istio
+    name: default
+    merge_type: merge
+    definition:
+      spec:
+        values:
+          meshConfig:
+            enableTracing: true
+            defaultConfig:
+              tracing: {}
+            extensionProviders:
+              - name: tempo-otlp
+                opentelemetry:
+                  port: 4317
+                  service: "{{ lab05_otel_servicio }}"
+            accessLogFile: /dev/stdout
+            accessLogEncoding: JSON
+            accessLogFormat: "{{ lab05_access_log_formato | trim }}\n"
+  vars:
+    lab05_access_log_formato: >-
+      {"start_time":"%START_TIME%","method":"%REQ(:METHOD)%","path":"%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%","protocol":"%PROTOCOL%","response_code":"%RESPONSE_CODE%","response_flags":"%RESPONSE_FLAGS%","bytes_received":"%BYTES_RECEIVED%","bytes_sent":"%BYTES_SENT%","duration":"%DURATION%","upstream_service_time":"%RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)%","x_forwarded_for":"%REQ(X-FORWARDED-FOR)%","user_agent":"%REQ(USER-AGENT)%","request_id":"%REQ(X-REQUEST-ID)%","authority":"%REQ(:AUTHORITY)%","upstream_host":"%UPSTREAM_HOST%","upstream_cluster":"%UPSTREAM_CLUSTER%","route_name":"%ROUTE_NAME%"}
+  register: lab05_istio_parche
+  when:
+    - gateway_class == 'istio'
+    - lab05_cr.results[0].resources | length > 0
+    - lab05_i_mesh.extensionProviders | default([]) | length == 0
+
+- name: Reiniciar el Gateway del participante para que Envoy cargue el tracing
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ wk_gateway }}-{{ gateway_class }}"
+    namespace: "{{ wk_ns_gateway }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "{{ now(utc=true).isoformat() }}"
+  when:
+    - lab05_istio_parche is changed
+    - lab05_reiniciar_gateway | default(true) | bool
+
+# --- 4 · CR Kuadrant y CR Authorino ------------------------------------------
+- name: Activar observabilidad, cabecera de correlación y tracing en el CR Kuadrant
+  kubernetes.core.k8s:
+    state: patched
+    api_version: kuadrant.io/v1beta1
+    kind: Kuadrant
+    name: kuadrant
+    namespace: kuadrant-system
+    merge_type: merge
+    definition:
+      spec:
+        observability:
+          enable: true
+          dataPlane:
+            defaultLevels:
+              - debug: "true"
+            httpHeaderIdentifier: x-request-id
+          tracing:
+            defaultEndpoint: "rpc://{{ lab05_otel_servicio }}:4317"
+            insecure: true
+  when: lab05_i_obs.tracing is not defined
+
+# Kuadrant propaga tracing.defaultEndpoint al Authorino generado. No se
+# parchea el hijo: el operador conserva la propiedad de su configuración.
+
+# --- 5 · Plugin: excepción del proveedor sin API equivalente en el padre ----
+- name: Configurar el sufijo mediante el workaround compartido del plugin
+  ansible.builtin.include_role:
+    name: console_plugin_configuration
+  vars:
+    console_plugin_verificar_solo: false
+    console_plugin_sufijo: "{{ lab05_plugin_sufijo }}"
+  when: gateway_class == 'istio'
+
+# --- 6 · Métricas de estado gatewayapi_* (kube-state-metrics) -----------------
+- name: Leer la imagen de kube-state-metrics del propio clúster
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: kube-state-metrics
+    namespace: openshift-monitoring
+  register: lab05_ksm_ocp
+
+- name: Crear lo que falte del exportador kube-state-metrics-kuadrant
+  ansible.builtin.include_tasks: crear_si_falta.yml
+  loop: >-
+    {{ [{'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': lab05_ksm_namespace}}]
+       + (lookup('ansible.builtin.file', 'kube-state-metrics-kuadrant.yaml')
+          | replace('IMAGEN_KSM', lab05_ksm_imagen)
+          | replace('namespace: rhcl-observability', 'namespace: ' ~ lab05_ksm_namespace)
+          | from_yaml_all | select | list) }}
+  loop_control:
+    loop_var: lab05_obj
+    label: "{{ lab05_obj.kind }}/{{ lab05_obj.metadata.name }}"
+  vars:
+    lab05_ksm_imagen: >-
+      {{ (lab05_ksm_ocp.resources[0].spec.template.spec.containers
+          | selectattr('name', 'equalto', 'kube-state-metrics') | first).image }}
+
+# --- 7 · Grafana comunitario --------------------------------------------------
+- name: Crear lo que falte de Grafana, su datasource y los dashboards
+  ansible.builtin.include_tasks: crear_si_falta.yml
+  loop: "{{ lookup('ansible.builtin.template', 'plataforma-grafana.yaml.j2') | from_yaml_all | select | list }}"
+  loop_control:
+    loop_var: lab05_obj
+    label: "{{ lab05_obj.kind }}/{{ lab05_obj.metadata.name }}"
+  when: lab05_grafana_instalar | bool

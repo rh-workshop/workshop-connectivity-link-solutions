@@ -1,0 +1,14 @@
+---
+- name: Borrar la API key y la AuthPolicy de ruta del Lab 4B
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ item.n }}"
+    namespace: "{{ wk_ns_app }}"
+    wait: true
+  loop:
+    - {v: v1, k: Secret, n: "api-key-{{ lab_id }}"}
+    - {v: kuadrant.io/v1, k: AuthPolicy, n: "api-route-auth-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"

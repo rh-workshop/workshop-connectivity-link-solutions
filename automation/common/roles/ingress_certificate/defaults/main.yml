@@ -1,0 +1,14 @@
+---
+ingress_certificate_mode: verify
+ingress_certificate_transicion: false
+ingress_certificate_nombre: cl-ingress-tls
+ingress_certificate_secret: cl-ingress-tls
+ingress_certificate_namespace: openshift-ingress
+ingress_certificate_issuer: cl-ingress-acme
+ingress_certificate_trust_bundle: ""
+ingress_certificate_min_days: 7
+ingress_certificate_incluir_dominio: true
+ingress_certificate_backup: ""
+ingress_certificate_template: "{{ role_path }}/../../../platform/kustomize/components/ingress-certificate/certificate.yaml.j2"
+ingress_certificate_verificar_fingerprint: true
+ingress_certificate_verificar_servicio: true

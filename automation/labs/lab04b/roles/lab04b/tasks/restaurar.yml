@@ -1,0 +1,69 @@
+---
+# Último paso del Lab 4B: revocar la clave (borrar su Secret) y volver a la
+# AuthPolicy JWT del Gateway, que es el estado que esperan los labs siguientes.
+- name: Revocar la clave y retirar la política de API key incluso si falla su prueba
+  block:
+    - name: Revocar la clave borrando su Secret
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: "api-key-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+        wait: true
+
+    - name: Clave revocada
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_http
+      vars:
+        http_prueba: "Lab 4B · clave revocada"
+        http_url: "{{ wk_api_url }}"
+        http_esperado: 401
+        http_no_log: true
+        http_cabeceras:
+          X-API-Key: "{{ wk_lab04b_api_key }}"
+      when: lab04b_validar | bool
+  always:
+    - name: Borrar la AuthPolicy de ruta (la ruta vuelve a heredar el JWT)
+      kubernetes.core.k8s:
+        state: absent
+        api_version: kuadrant.io/v1
+        kind: AuthPolicy
+        name: "api-route-auth-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+        wait: true
+
+    - name: Esperar a la AuthPolicy JWT del Gateway Enforced
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: AuthPolicy
+        espera_nombre: "gw-default-auth-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Enforced
+
+    - name: Comprobar el JWT restaurado
+      when: lab04b_validar | bool
+      block:
+        - name: Pedir un token nuevo de alice
+          ansible.builtin.include_role:
+            name: comun
+            tasks_from: token_keycloak
+          vars:
+            token_usuario: alice
+
+        - name: JWT restaurado
+          ansible.builtin.include_role:
+            name: comun
+            tasks_from: probar_http
+          vars:
+            http_prueba: "Lab 4B · JWT tras restaurar (espera a que venza la cuota previa)"
+            http_json_contract: "{{ wk_bank_json_contract }}"
+            http_url: "{{ wk_api_url }}"
+            http_esperado: 200
+            http_no_log: true
+            http_cabeceras:
+              Authorization: "Bearer {{ wk_token }}"

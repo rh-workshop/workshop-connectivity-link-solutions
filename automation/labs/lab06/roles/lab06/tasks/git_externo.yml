@@ -1,0 +1,72 @@
+---
+# Operación Git en el repo del participante desde la máquina de control (los
+# mismos comandos del lab: git add/commit/push y git revert). Solo con
+# lab06_git_push=true. No hay módulo de commit/push: se usa command con
+# changed_when explícito.
+#   vars: lab06_git_op (publicar | revertir), lab06_limite, lab06_git_mensaje
+#   deja: lab06_git (cambio: bool, commit: sha)
+- name: Crear la carpeta del participante en la copia de trabajo
+  ansible.builtin.file:
+    path: "{{ lab06_git_dir.path }}/repo/{{ lab06_git_path }}"
+    state: directory
+    mode: "0755"
+  when: lab06_git_op == 'publicar'
+  changed_when: false
+
+- name: Escribir la RateLimitPolicy resuelta en la carpeta del participante
+  ansible.builtin.template:
+    src: ratelimitpolicy.yaml.j2
+    dest: "{{ lab06_git_dir.path }}/repo/{{ lab06_git_path }}/ratelimitpolicy.yaml"
+    mode: "0644"
+  when: lab06_git_op == 'publicar'
+  changed_when: false
+
+- name: Preparar el commit (git add)
+  ansible.builtin.command:
+    argv: [git, add, -A]
+    chdir: "{{ lab06_git_dir.path }}/repo"
+  changed_when: false
+  when: lab06_git_op == 'publicar'
+
+- name: Comprobar si hay cambios que versionar
+  ansible.builtin.command:
+    argv: [git, diff, --cached, --quiet]
+    chdir: "{{ lab06_git_dir.path }}/repo"
+  register: lab06_git_diff
+  changed_when: false
+  failed_when: lab06_git_diff.rc > 1
+  when: lab06_git_op == 'publicar'
+
+- name: "Git · {{ lab06_git_op }}"
+  ansible.builtin.command:
+    argv: "{{ ['git', 'commit', '-q', '-m', lab06_git_mensaje] if lab06_git_op == 'publicar' else ['git', 'revert', '--no-edit', 'HEAD'] }}"
+    chdir: "{{ lab06_git_dir.path }}/repo"
+  environment:
+    GIT_AUTHOR_NAME: "{{ lab06_git_autor_nombre }}"
+    GIT_AUTHOR_EMAIL: "{{ lab06_git_autor_email }}"
+    GIT_COMMITTER_NAME: "{{ lab06_git_autor_nombre }}"
+    GIT_COMMITTER_EMAIL: "{{ lab06_git_autor_email }}"
+  register: lab06_git_commit
+  changed_when: true
+  when: lab06_git_op == 'revertir' or lab06_git_diff.rc == 1
+
+- name: Empujar a la rama que sigue el Application (git push)
+  ansible.builtin.command:
+    argv: [git, push, -q, origin, "HEAD:{{ lab06_git_revision }}"]
+    chdir: "{{ lab06_git_dir.path }}/repo"
+  changed_when: true
+  when: lab06_git_commit is changed
+  no_log: true
+
+- name: Leer el commit resultante
+  ansible.builtin.command:
+    argv: [git, rev-parse, HEAD]
+    chdir: "{{ lab06_git_dir.path }}/repo"
+  register: lab06_git_head
+  changed_when: false
+
+- name: Registrar el commit resultante
+  ansible.builtin.set_fact:
+    lab06_git:
+      cambio: "{{ lab06_git_commit is changed }}"
+      commit: "{{ lab06_git_head.stdout | trim }}"

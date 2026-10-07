@@ -1,0 +1,104 @@
+---
+# Pruebas del Lab 4B: 401 sin clave / clave incorrecta, 200 con clave,
+# 403 en /admin con rol customer, 200 con rol admin y 429 al agotar la cuota.
+- name: Sin clave
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 4B · sin API key"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 401
+
+- name: Con clave incorrecta
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 4B · API key incorrecta"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 401
+    http_cabeceras:
+      X-API-Key: clave-invalida
+
+- name: Con la clave válida
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 4B · API key válida"
+    http_json_contract: "{{ wk_bank_json_contract }}"
+    http_url: "{{ wk_api_url }}"
+    http_esperado: 200
+    http_no_log: true
+    http_cabeceras:
+      X-API-Key: "{{ wk_lab04b_api_key }}"
+
+- name: Rol customer en /admin
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 4B · rol customer en /admin/audit-log"
+    http_url: "https://{{ wk_lab_host }}/admin/audit-log"
+    http_esperado: 403
+    http_no_log: true
+    http_cabeceras:
+      X-API-Key: "{{ wk_lab04b_api_key }}"
+
+- name: Borrar el Secret para cambiar el rol (Authorino no relee anotaciones editadas)
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: Secret
+    name: "api-key-{{ lab_id }}"
+    namespace: "{{ wk_ns_app }}"
+    wait: true
+
+- name: Recrear el Secret con la misma clave y rol admin
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: api-key-secret.yaml.j2
+  vars:
+    lab04b_rol: admin
+  no_log: true
+
+- name: Rol admin en /admin
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 4B · rol admin en /admin/audit-log"
+    http_json_contract:
+      - path: length(Data.AuditLog)
+        equals: 1
+      - path: Data.AuditLog[0].Event
+        equals: AccountRead
+      - path: Data.AuditLog[0].Actor
+        equals: ACC-DEMO-001
+      - path: Data.AuditLog[0].Timestamp
+        equals: '2026-01-01T00:00:00Z'
+    http_url: "https://{{ wk_lab_host }}/admin/audit-log"
+    http_esperado: 200
+    http_no_log: true
+    http_cabeceras:
+      X-API-Key: "{{ wk_lab04b_api_key }}"
+
+- name: Comprobar cuota publicada del consumidor en ventana limpia
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_cuota_exacta
+  vars:
+    cuota_url: "{{ wk_api_url }}"
+    cuota_limite: 5
+    cuota_ventana_segundos: 60
+    cuota_json_contract: "{{ wk_bank_json_contract }}"
+    cuota_cabeceras:
+      X-API-Key: "{{ wk_lab04b_api_key }}"
+
+- name: Resumen del Lab 4B
+  ansible.builtin.debug:
+    msg: "Lab 4B OK · 401 sin clave · 401 clave incorrecta · 200 con clave y JSON Data.Party · 403 customer en /admin · 200 admin con JSON Data.AuditLog · cuota exacta 200 200 200 200 200 429 en ventana limpia"

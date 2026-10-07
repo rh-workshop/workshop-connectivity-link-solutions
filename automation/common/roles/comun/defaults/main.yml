@@ -1,0 +1,25 @@
+---
+# Valores por defecto de las tareas auxiliares (se sobrescriben al incluirlas).
+espera_estado: "True"
+http_metodo: GET
+http_cabeceras: {}
+dns_verificar_autoritativos: true
+
+# Ansible conserva compatibilidad; Argo CD es propietario de la plataforma declarativa.
+plataforma_gestor: ansible
+
+# Contrato publicado del backend de demo; reutilizar en pruebas HTTP autenticadas.
+wk_bank_json_contract:
+  - path: Data.Party.PartyId
+    equals: CL-BANK-DEMO
+  - path: Data.Party.name
+    equals: Backend de demo via Connectivity Link
+wk_bank_accounts_json_contract:
+  - path: length(Data.Account)
+    equals: 1
+  - path: Data.Account[0].AccountId
+    equals: ACC-DEMO-001
+  - path: Data.Account[0].Currency
+    equals: EUR
+  - path: Data.Account[0].Nickname
+    equals: Demo Savings

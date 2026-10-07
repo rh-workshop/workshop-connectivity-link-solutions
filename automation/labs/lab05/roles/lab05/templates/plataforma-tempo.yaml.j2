@@ -1,0 +1,135 @@
+# Tempo multi-tenant (modo openshift, tenant {{ lab05_tempo_tenant }}), RBAC de lectura y
+# escritura de trazas, colector OTLP y UIPlugin DistributedTracing
+# (lab5.adoc, «Trazas y access logs · procedimiento del instructor», pasos 2 y 3).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ lab05_tempo_namespace }}
+---
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoMonolithic
+metadata:
+  name: {{ lab05_tempo_instancia }}
+  namespace: {{ lab05_tempo_namespace }}
+spec:
+  storage:
+    traces:
+      backend: memory
+      size: 2Gi
+  multitenancy:
+    enabled: true
+    mode: openshift
+    authentication:
+      - tenantName: {{ lab05_tempo_tenant }}
+        tenantId: {{ lab05_tempo_tenant_id }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tempo-{{ lab05_tempo_instancia }}-{{ lab05_tempo_tenant }}-traces-reader
+rules:
+  - apiGroups: ["tempo.grafana.com"]
+    resources: ["{{ lab05_tempo_tenant }}"]
+    resourceNames: ["traces"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tempo-{{ lab05_tempo_instancia }}-{{ lab05_tempo_tenant }}-traces-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tempo-{{ lab05_tempo_instancia }}-{{ lab05_tempo_tenant }}-traces-reader
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:authenticated
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: {{ lab05_tempo_namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tempo-{{ lab05_tempo_instancia }}-{{ lab05_tempo_tenant }}-traces-writer
+rules:
+  - apiGroups: ["tempo.grafana.com"]
+    resources: ["{{ lab05_tempo_tenant }}"]
+    resourceNames: ["traces"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tempo-{{ lab05_tempo_instancia }}-{{ lab05_tempo_tenant }}-traces-writer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tempo-{{ lab05_tempo_instancia }}-{{ lab05_tempo_tenant }}-traces-writer
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: {{ lab05_tempo_namespace }}
+---
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: distributed-tracing
+spec:
+  type: DistributedTracing
+---
+# Colector: recibe OTLP sin autenticación en 4317 y reenvía al gateway de Tempo
+# con el token de su ServiceAccount y el tenant, por TLS con la CA de servicio.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ lab05_otel_nombre }}
+  namespace: {{ lab05_tempo_namespace }}
+spec:
+  mode: deployment
+  serviceAccount: otel-collector
+  config:
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      otlp/tempo:
+        endpoint: tempo-{{ lab05_tempo_instancia }}-gateway.{{ lab05_tempo_namespace }}.svc.cluster.local:4317
+        tls:
+          insecure: false
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        auth:
+          authenticator: bearertokenauth
+        headers:
+          X-Scope-OrgID: {{ lab05_tempo_tenant }}
+    service:
+      extensions: [bearertokenauth]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/tempo]
+---
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mesh-default
+  namespace: istio-system
+spec:
+  tracing:
+    - providers:
+        - name: tempo-otlp
+      randomSamplingPercentage: 100

@@ -1,0 +1,31 @@
+---
+- name: Consultar el discovery OIDC del realm
+  ansible.builtin.uri:
+    url: "{{ wk_keycloak_issuer }}/.well-known/openid-configuration"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    status_code: 200
+  register: kc_discovery
+
+- name: Comprobar que el issuer coincide con el que usará la AuthPolicy
+  ansible.builtin.assert:
+    that: kc_discovery.json.issuer == wk_keycloak_issuer
+    fail_msg: "El issuer publicado ({{ kc_discovery.json.issuer }}) no coincide con {{ wk_keycloak_issuer }}."
+    success_msg: "Issuer {{ wk_keycloak_issuer }} correcto."
+
+- name: Pedir un token de alice
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: alice
+
+- name: Comprobar los claims del token de alice
+  ansible.builtin.assert:
+    that:
+      - kc_claims.iss == wk_keycloak_issuer
+      - "'customer' in kc_claims.realm_access.roles"
+      - "'inventario' not in kc_claims.realm_access.roles"
+    fail_msg: "Token de alice incorrecto: iss={{ kc_claims.iss }} roles={{ kc_claims.realm_access.roles | default([]) }}"
+    success_msg: "Token de alice: iss correcto, rol customer, sin inventario."
+  vars:
+    kc_claims: "{{ (wk_token.split('.')[1] | replace('-', '+') | replace('_', '/') ~ '==') | b64decode | from_json }}"

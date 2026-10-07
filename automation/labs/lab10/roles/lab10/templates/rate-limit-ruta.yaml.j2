@@ -1,0 +1,20 @@
+# Lab 10 · paso 3: la cuota «laxa» del desarrollador sobre su ruta.
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: gobierno-rl-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: gobierno-route-{{ lab_id }}
+  limits:
+    "gobierno-por-identidad":
+      rates:
+        - limit: {{ lab10_cuota_ruta }}
+          window: 60s
+      counters:
+        - expression: auth.identity.user_id

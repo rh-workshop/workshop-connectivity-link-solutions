@@ -1,0 +1,15 @@
+---
+- name: Lab 7 · preparar únicamente ACME por participante
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: comun
+      tags: [always]
+  tasks:
+    - name: Preparar ACME con el rol canónico del participante
+      ansible.builtin.include_role:
+        name: lab07
+        tasks_from: acme_prepare
+        apply:
+          tags: [lab07_acme]
+      tags: [lab07_acme]

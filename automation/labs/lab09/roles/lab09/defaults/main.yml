@@ -1,0 +1,18 @@
+---
+lab09_validar: true
+# Applications migradas desde 3scale: una por plan, con la user_key ORIGINAL
+# (en el taller, k-<plan>-<lab_id>; en una migración real, las exportadas de 3scale).
+# plan_id solo en los planes nuevos (convención de PlanPolicy y del portal).
+lab09_apps:
+  - {app: app-basico, plan: basico}
+  - {app: app-premium, plan: premium}
+  - {app: app-bronze, plan: bronze, plan_id: bronze}
+  - {app: app-silver, plan: silver, plan_id: silver}
+  - {app: app-gold, plan: gold, plan_id: gold}
+# Límite por minuto de cada plan (Application Plans de 3scale + los nuevos).
+# Un plan sin entrada (gold) no se limita.
+lab09_limites:
+  basico: 5
+  premium: 20
+  bronze: 2
+  silver: 5

@@ -1,0 +1,66 @@
+# Lab 11 · paso 11: CA de socios con cert-manager (Issuer autofirmado → CA →
+# Issuer ca) y dos certificados de cliente (clientAuth): ACME Pagos (autorizado)
+# y Otra Empresa (misma CA, organización no autorizada).
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: b2b-bootstrap-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: b2b-ca-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  isCA: true
+  commonName: CA socios B2B {{ lab_id }}
+  subject:
+    organizations: ["Plataforma"]
+  secretName: b2b-ca-{{ lab_id }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: b2b-bootstrap-{{ lab_id }}
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: b2b-ca-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  ca:
+    secretName: b2b-ca-{{ lab_id }}
+{% for socio in [{'n': 'socio-acme', 'o': 'ACME Pagos'}, {'n': 'socio-otro', 'o': 'Otra Empresa'}] %}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ socio.n }}-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  commonName: {{ socio.n }}
+  subject:
+    organizations: ["{{ socio.o }}"]
+  usages: ["digital signature", "key encipherment", "client auth"]
+  secretName: {{ socio.n }}-{{ lab_id }}
+  duration: 2160h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: b2b-ca-{{ lab_id }}
+    kind: Issuer
+{% endfor %}

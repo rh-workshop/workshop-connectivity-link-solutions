@@ -1,0 +1,8 @@
+---
+gateway_defaults_verificar_solo: true
+gateway_defaults_namespace: istio-system
+gateway_defaults_name: workshop-istio-gateway-defaults
+gateway_defaults_istio_name: default
+gateway_defaults_supported_versions: [v1.30.4, v1.30.5]
+gateway_defaults_backup: false
+gateway_defaults_backup_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/state/workshop-connectivity-link/gateway-defaults"

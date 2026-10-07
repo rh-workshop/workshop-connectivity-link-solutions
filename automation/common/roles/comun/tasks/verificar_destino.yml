@@ -1,0 +1,55 @@
+---
+# Guardias opcionales con el mismo cliente Kubernetes que realizará escrituras.
+# El UID es metadata.uid del Namespace kube-system, no el clusterID de OCP.
+- name: Leer el UID del namespace kube-system
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: kube-system
+  register: comun_identidad_namespace
+  when: openshift_cluster_uid_esperado | default('') | length > 0
+
+- name: Comprobar el UID esperado del clúster
+  ansible.builtin.assert:
+    that:
+      - comun_identidad_namespace.resources | length == 1
+      - comun_identidad_namespace.resources[0].metadata.uid == openshift_cluster_uid_esperado
+    fail_msg: El UID del destino no coincide; se cancela antes de escribir.
+    quiet: true
+  when: openshift_cluster_uid_esperado | default('') | length > 0
+
+- name: Leer la infraestructura del clúster
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Infrastructure
+    name: cluster
+  register: comun_identidad_infra
+  when: openshift_infra_name_esperado | default('') | length > 0
+
+- name: Comprobar infrastructureName esperado
+  ansible.builtin.assert:
+    that:
+      - comun_identidad_infra.resources | length == 1
+      - comun_identidad_infra.resources[0].status.infrastructureName == openshift_infra_name_esperado
+    fail_msg: infrastructureName del destino no coincide; se cancela antes de escribir.
+    quiet: true
+  when: openshift_infra_name_esperado | default('') | length > 0
+
+- name: Leer la URL de la consola
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: comun_identidad_consola
+  when: openshift_console_domain_esperado | default('') | length > 0
+
+- name: Comprobar el dominio esperado de la consola
+  ansible.builtin.assert:
+    that:
+      - comun_identidad_consola.resources | length == 1
+      - >-
+        (comun_identidad_consola.resources[0].status.consoleURL | urlsplit('hostname'))
+        == openshift_console_domain_esperado
+    fail_msg: El dominio de consola no coincide; se cancela antes de escribir.
+    quiet: true
+  when: openshift_console_domain_esperado | default('') | length > 0

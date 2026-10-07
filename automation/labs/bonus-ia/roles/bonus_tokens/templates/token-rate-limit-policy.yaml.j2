@@ -1,0 +1,21 @@
+# TokenRateLimitPolicy (ia-practica.adoc, paso 3): {{ bonus_tokens_limite }} tokens por
+# ventana de {{ bonus_tokens_ventana }} y usuario, contados de usage.total_tokens de las respuestas.
+apiVersion: kuadrant.io/v1alpha1
+kind: TokenRateLimitPolicy
+metadata:
+  name: mock-llm-tokens-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: llm-route-{{ lab_id }}
+  limits:
+    "tokens-per-user-per-minute":
+      rates:
+        - limit: {{ bonus_tokens_limite }}
+          window: {{ bonus_tokens_ventana }}
+      counters:
+        - expression: auth.identity.user_id

@@ -1,0 +1,38 @@
+---
+# Prueba del hostname b2b-… con (o sin) certificado de cliente. Un rechazo en
+# el saludo TLS no tiene código HTTP: uri devuelve status -1.
+#   vars: b2b_prueba, b2b_cert ('' = sin certificado), b2b_esperado (int)
+- name: "Probar · {{ b2b_prueba }} → {{ b2b_esperado }}"
+  block:
+    - name: "Petición mTLS · {{ b2b_prueba }}"
+      ansible.builtin.uri:
+        url: "{{ lab11_b2b_url }}"
+        client_cert: "{{ (lab11_dir_local ~ '/' ~ b2b_cert ~ '.crt') if b2b_cert | length > 0 else omit }}"
+        client_key: "{{ (lab11_dir_local ~ '/' ~ b2b_cert ~ '.key') if b2b_cert | length > 0 else omit }}"
+        validate_certs: false
+        return_content: true
+        status_code: [-1, 200, 401, 403, 404, 429, 500, 502, 503]
+        timeout: 15
+      register: lab11_b2b
+      until: lab11_b2b.status == (b2b_esperado | int)
+      retries: "{{ http_reintentos }}"
+      delay: 3
+
+    - name: Exigir una alerta de negociación TLS cuando se espera fallo del saludo
+      ansible.builtin.assert:
+        that:
+          - lab11_b2b.status == -1
+          - >-
+            lab11_b2b.msg | default('') is
+            search('(?i)(TLSV[0-9.]*[_ ]ALERT|SSL.*ALERT|CERTIFICATE_REQUIRED|UNKNOWN_CA|certificate required|unknown ca|handshake failure)')
+        fail_msg: >-
+          {{ b2b_prueba }} no produjo una alerta TLS identificable; HTTP {{ lab11_b2b.status | default('?') }}.
+          La ruta debe resolver y aceptar HTTPS antes de validar el rechazo mTLS.
+        quiet: true
+      when: b2b_esperado | int == -1
+  rescue:
+    - name: "Fallar · {{ b2b_prueba }}"
+      ansible.builtin.fail:
+        msg: >-
+          {{ b2b_prueba }}: se esperaba {{ b2b_esperado }} en {{ lab11_b2b_url }} y se obtuvo
+          {{ lab11_b2b.status | default('?') }} ({{ lab11_b2b.msg | default('') }}).

@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab12
+  author: workshop-connectivity-link
+  description: Lab 12 · Operación · PrometheusRule CuotaAgotada y PromQL por ruta; diagnóstico y demostraciones de resiliencia opcionales.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

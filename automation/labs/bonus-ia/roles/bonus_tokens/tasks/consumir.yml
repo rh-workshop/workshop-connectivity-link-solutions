@@ -1,0 +1,32 @@
+---
+# Llama a la API de IA hasta recibir 429 (presupuesto de tokens agotado).
+#   vars: bonus_fase (texto)  ->  deja bonus_consumo (attempts = peticiones hechas)
+- name: "Llamar hasta el 429 · {{ bonus_fase }}"
+  block:
+    - name: "POST /v1/chat/completions hasta agotar {{ bonus_tokens_limite }} tokens · {{ bonus_fase }}"
+      ansible.builtin.uri:
+        url: "{{ bonus_url }}"
+        method: POST
+        body_format: json
+        body: "{{ bonus_cuerpo }}"
+        headers:
+          Authorization: "Bearer {{ wk_token }}"
+        validate_certs: false
+        status_code: [200, 429]
+        timeout: 15
+      register: bonus_consumo
+      until: bonus_consumo.status == 429
+      retries: "{{ bonus_tokens_max_peticiones }}"
+      delay: 0
+      no_log: true
+  rescue:
+    - name: "Fallar si la cuota por tokens no corta · {{ bonus_fase }}"
+      ansible.builtin.fail:
+        msg: >-
+          {{ bonus_tokens_max_peticiones }} llamadas a {{ bonus_url }} sin 429 ({{ bonus_fase }}): con 15-60 tokens por
+          respuesta y un límite de {{ bonus_tokens_limite }}, el corte debía llegar antes. Limitador puede conservar un
+          límite anterior: borra y recrea la TokenRateLimitPolicy (ver ia-practica.adoc).
+
+- name: "Informar del corte · {{ bonus_fase }}"
+  ansible.builtin.debug:
+    msg: "Cuota por tokens aplicada ({{ bonus_fase }}): HTTP 429 en la petición {{ bonus_consumo.attempts | default(1) }} del bucle."

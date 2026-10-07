@@ -1,0 +1,8 @@
+---
+# Todo se ejecuta desde la máquina de control contra la API de OpenShift
+# (kubeconfig activo: ~/.kube/config o $KUBECONFIG). No hay hosts remotos.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: "{{ ansible_playbook_python }}"

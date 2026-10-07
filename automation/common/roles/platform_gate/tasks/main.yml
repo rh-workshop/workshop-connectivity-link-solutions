@@ -1,0 +1,77 @@
+---
+- name: Validar fase explícita y autorización separada para cambiar la referencia TLS
+  ansible.builtin.assert:
+    that:
+      - platform_gate_phase in ['operators', 'istio-cni', 'istio', 'gateway-defaults', 'kuadrant', 'cert-manager', 'keycloak-prerequisites', 'keycloak', 'rbac', 'observability', 'ingress-certificate', 'ingress-reference']
+      - platform_gate_phase != 'ingress-reference' or platform_gate_allow_reference_change | bool
+    fail_msg: Las fases son consultas; ingress-reference exige autorización explícita y backup privado del rol TLS.
+    quiet: true
+
+- name: Leer parámetros canónicos de observabilidad sin secretos
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../../labs/lab05/roles/lab05/defaults/main.yml"
+    name: platform_gate_observability_defaults
+  when: platform_gate_phase in ['operators', 'observability']
+
+- name: Comprobar OLM y CRDs establecidos antes de admitir instancias
+  ansible.builtin.include_tasks: operators.yml
+  when: platform_gate_phase == 'operators'
+
+- name: Esperar instancias canónicas sin escribir recursos
+  ansible.builtin.include_tasks: esperar.yml
+  loop: "{{ platform_gate_resources[platform_gate_phase] | default([]) }}"
+  loop_control:
+    loop_var: gate_resource
+    label: "{{ gate_resource.kind }}/{{ gate_resource.name }}"
+
+- name: Comprobar Secrets preexistentes de Keycloak
+  ansible.builtin.include_tasks: keycloak_prerequisites.yml
+  when: platform_gate_phase == 'keycloak-prerequisites'
+
+- name: Verificar defaults únicos de clase en namespace real de Istio sin escribir
+  ansible.builtin.include_role:
+    name: gateway_defaults
+  vars:
+    gateway_defaults_verificar_solo: true
+  when: platform_gate_phase == 'gateway-defaults'
+
+- name: Verificar ClusterRoles preexistentes sin adoptar ni cambiar permisos
+  kubernetes.core.k8s_info:
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    name: "{{ gate_role }}"
+  register: platform_gate_rbac
+  failed_when: platform_gate_rbac.resources | length != 1
+  loop: [workshop-gatewayclass-view, workshop-policies-edit, workshop-operator-view]
+  loop_control:
+    loop_var: gate_role
+  when: platform_gate_phase == 'rbac'
+
+- name: Verificar observabilidad completa mediante el rol canónico del Lab 5
+  ansible.builtin.include_role:
+    name: lab05
+    tasks_from: plataforma_verificar
+  when: platform_gate_phase == 'observability'
+
+- name: Verificar el workaround del plugin sin adoptar ni escribir el Deployment del operador
+  ansible.builtin.include_role:
+    name: console_plugin_configuration
+  vars:
+    console_plugin_verificar_solo: true
+  when: platform_gate_phase == 'observability'
+
+- name: Validar emisión TLS antes de cambiar IngressController
+  ansible.builtin.include_role:
+    name: ingress_certificate
+  vars:
+    ingress_certificate_mode: verify
+    ingress_certificate_verificar_servicio: false
+  when: platform_gate_phase == 'ingress-certificate'
+
+- name: Cambiar referencia TLS usando validación real y backup del rol canónico
+  ansible.builtin.include_role:
+    name: ingress_certificate
+  vars:
+    ingress_certificate_mode: apply
+    ingress_certificate_verificar_servicio: true
+  when: platform_gate_phase == 'ingress-reference'

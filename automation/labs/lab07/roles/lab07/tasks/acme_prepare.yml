@@ -1,0 +1,12 @@
+---
+# Preparación instructor aislada: no importa tenant/realm/Gateway/policies.
+- name: Preparar o verificar el emisor ACME exclusivo del participante
+  ansible.builtin.include_role:
+    name: acme_issuer
+  vars:
+    acme_issuer_participant_mode: true
+    acme_issuer_nombre: "letsencrypt-dns01-{{ lab_id }}"
+    acme_secret_nombre: "acme-route53-credentials-{{ lab_id }}"
+    acme_cuenta_secret: "letsencrypt-dns01-{{ lab_id }}-account"
+    acme_issuer_kind: ClusterIssuer
+    acme_secret_namespace: cert-manager

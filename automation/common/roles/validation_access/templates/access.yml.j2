@@ -1,0 +1,26 @@
+# Sin Secret de token: el instructor solicita TokenRequest de duración limitada.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ validation_access_service_account }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ validation_access_binding }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+  - kind: ServiceAccount
+    name: {{ validation_access_service_account }}
+    namespace: {{ wk_ns_app }}

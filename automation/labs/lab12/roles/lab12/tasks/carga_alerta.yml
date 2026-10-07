@@ -1,0 +1,67 @@
+---
+# Una ronda de carga (30 peticiones: unos pocos 200 y el resto 429) sobre
+# bank-api (alice) o /inventario (bob), según lab12_carga_ruta, y una espera
+# ACOTADA a que la regla cambie de estado. La espera con until es a la vez el
+# ritmo de la carga (~30 s entre rondas, como el lab).
+# El when va DENTRO del fichero: en include_tasks con loop, el when del include
+# se evalúa para todas las rondas al expandir el bucle, no ronda a ronda.
+- name: "Ronda {{ lab12_ronda + 1 }} (solo si la alerta aún no llegó)"
+  when: not (lab12_alerta_ok | default(false) | bool)
+  block:
+    - name: "Ronda {{ lab12_ronda + 1 }} · renovar el token"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: "{{ 'bob' if lab12_carga_ruta == 'inventario' else 'alice' }}"
+
+    - name: "Ronda {{ lab12_ronda + 1 }} · 30 peticiones"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_serie
+      vars:
+        serie_prueba: "Lab 12 · carga ronda {{ lab12_ronda + 1 }}"
+        serie_url: "{{ wk_inv_url if lab12_carga_ruta == 'inventario' else wk_api_url }}"
+        serie_n: 30
+        serie_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+
+    - name: "Ronda {{ lab12_ronda + 1 }} · estado de CuotaAgotada"
+      ansible.builtin.uri:
+        url: "{{ wk_thanos_url }}/api/v1/rules?type=alert"
+        headers:
+          Authorization: "Bearer {{ wk_thanos_token }}"
+        validate_certs: false
+        status_code: 200
+      register: lab12_reglas
+      until: (lab12_alerta_backend | first | default({})).state | default('') in lab12_estados_ok
+      retries: 3
+      delay: 10
+      failed_when: false
+      vars:
+        lab12_regla: >-
+          {{ lab12_reglas.json.data.groups | default([]) | selectattr('name', 'equalto', 'api-' ~ lab_id)
+             | map(attribute='rules') | flatten | selectattr('name', 'equalto', 'CuotaAgotada') | list }}
+        lab12_alerta_backend: >-
+          {{ lab12_regla | map(attribute='alerts') | flatten
+             | selectattr('labels.destination_service_name', 'equalto', lab12_backend) | list }}
+        lab12_estados_ok: "{{ ['firing'] if lab12_alerta_estado == 'firing' else ['pending', 'firing'] }}"
+      no_log: true
+
+    - name: "Ronda {{ lab12_ronda + 1 }} · anotar el estado"
+      ansible.builtin.set_fact:
+        lab12_alerta_ultimo: "{{ (lab12_alerta_backend | first | default({})).state | default('desconocido') }}"
+        lab12_alerta_etiquetas: "{{ (lab12_alerta_backend | first | default({})).labels | default({}) }}"
+        lab12_alerta_ok: "{{ (lab12_alerta_backend | first | default({})).state | default('') in lab12_estados_ok }}"
+      vars:
+        lab12_regla: >-
+          {{ lab12_reglas.json.data.groups | default([]) | selectattr('name', 'equalto', 'api-' ~ lab_id)
+             | map(attribute='rules') | flatten | selectattr('name', 'equalto', 'CuotaAgotada') | list }}
+        lab12_alerta_backend: >-
+          {{ lab12_regla | map(attribute='alerts') | flatten
+             | selectattr('labels.destination_service_name', 'equalto', lab12_backend) | list }}
+        lab12_estados_ok: "{{ ['firing'] if lab12_alerta_estado == 'firing' else ['pending', 'firing'] }}"
+
+    - name: "Ronda {{ lab12_ronda + 1 }} · estado actual"
+      ansible.builtin.debug:
+        msg: "CuotaAgotada → {{ lab12_alerta_ultimo }}"

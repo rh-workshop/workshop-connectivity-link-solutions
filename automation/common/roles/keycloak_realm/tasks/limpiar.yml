@@ -1,0 +1,14 @@
+---
+- name: Resolver las credenciales del admin de Keycloak
+  ansible.builtin.import_tasks: credenciales.yml
+
+- name: "Borrar el realm {{ wk_realm }}"
+  community.general.keycloak_realm:
+    auth_keycloak_url: "{{ wk_keycloak_url }}"
+    auth_realm: "{{ keycloak_admin_realm }}"
+    auth_username: "{{ wk_kc_admin_usuario }}"
+    auth_password: "{{ wk_kc_admin_password }}"
+    validate_certs: "{{ keycloak_validate_certs }}"
+    id: "{{ wk_realm }}"
+    realm: "{{ wk_realm }}"
+    state: absent

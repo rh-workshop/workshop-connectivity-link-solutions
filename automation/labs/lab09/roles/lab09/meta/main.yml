@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab09
+  author: workshop-connectivity-link
+  description: Lab 9 · Migración de un Product de 3scale (mapping rules, user_key, planes Básico/Premium/Bronze/Silver/Gold).
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

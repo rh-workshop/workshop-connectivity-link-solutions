@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: tenant
+  author: workshop-connectivity-link
+  description: Slice del participante (namespaces, labels, cuotas, RBAC y Secret DNS), como bootstrap-users.sh.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

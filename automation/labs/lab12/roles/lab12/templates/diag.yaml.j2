@@ -1,0 +1,168 @@
+# Lab 12 · paso 10: Gateway de pruebas SIN balanceador (Service ClusterIP) y
+# los cuatro fallos provocados a propósito (A: DNS fuera de zona · B: emisor
+# inexistente → emisor no listo · C: targetRef inexistente · D: Overridden).
+# lab12_diag_fase: base | emisor_no_listo
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: diag-gw-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  annotations:
+    networking.istio.io/service-type: ClusterIP
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  gatewayClassName: {{ gateway_class }}
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: api-diag.example.org
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: diag-gw-{{ lab_id }}-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-tenant: {{ lab_id }}
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: api-diag.example.org
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-tenant: {{ lab_id }}
+---
+# Caso A · el hostname no pertenece a ninguna zona del proveedor.
+apiVersion: kuadrant.io/v1
+kind: DNSPolicy
+metadata:
+  name: diag-dns-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: diag-gw-{{ lab_id }}
+  providerRefs:
+    - name: {{ dns_provider_secret }}
+---
+# Caso B · primero un ClusterIssuer que no existe; después un Issuer ca sin Secret.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: diag-ca-sin-secret-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  ca:
+    secretName: diag-ca-inexistente
+---
+apiVersion: kuadrant.io/v1
+kind: TLSPolicy
+metadata:
+  name: diag-tls-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: diag-gw-{{ lab_id }}
+  issuerRef:
+    group: cert-manager.io
+{% if lab12_diag_fase == 'base' %}
+    kind: ClusterIssuer
+    name: diag-issuer-inexistente
+{% else %}
+    kind: Issuer
+    name: diag-ca-sin-secret-{{ lab_id }}
+{% endif %}
+---
+# Caso C · la política apunta a una ruta que no existe.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: diag-auth-huerfana-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: diag-ruta-inexistente-{{ lab_id }}
+  rules:
+    authentication:
+      anonima:
+        anonymous: {}
+---
+# Caso D · la política de la ruta queda anulada por un overrides del Gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: diag-ruta-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  parentRefs:
+    - name: diag-gw-{{ lab_id }}
+      namespace: {{ wk_ns_gateway }}
+  hostnames:
+    - api-diag.example.org
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1
+      backendRefs:
+        - name: bank-api
+          port: 8080
+---
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: diag-auth-ruta-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: diag-ruta-{{ lab_id }}
+  rules:
+    authentication:
+      anonima:
+        anonymous: {}
+---
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: diag-auth-gw-{{ lab_id }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: diag-gw-{{ lab_id }}
+  overrides:
+    rules:
+      authentication:
+        keycloak-jwt:
+          jwt:
+            issuerUrl: {{ wk_keycloak_issuer }}

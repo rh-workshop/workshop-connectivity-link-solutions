@@ -1,0 +1,19 @@
+---
+- name: Exigir el límite efectivo de tokens en CR y API de Limitador
+  ansible.builtin.assert:
+    that:
+      - bonus_limites_cr | length == 1
+      - bonus_limites_runtime | length == 1
+      - bonus_limites_cr[0].max_value is integer
+      - bonus_limites_runtime[0].max_value is integer
+      - bonus_limites_cr[0].max_value == bonus_tokens_limite | int
+      - bonus_limites_runtime[0].max_value == bonus_tokens_limite | int
+      - bonus_tokens_ventana is match('^[1-9][0-9]*s$')
+      - bonus_limites_runtime[0].seconds == bonus_tokens_ventana[:-1] | int
+      - bonus_limites_cr[0].seconds == bonus_tokens_ventana[:-1] | int
+      - bonus_limites_runtime[0].conditions | sort == bonus_limites_cr[0].conditions | sort
+      - bonus_limites_runtime[0].variables | sort == bonus_limites_cr[0].variables | sort
+    fail_msg: >-
+      El límite cargado en Limitador no coincide con la cuota por usuario esperada.
+      Enforced no garantiza el valor aplicado; revisa la incidencia #513 antes de consumir.
+    quiet: true

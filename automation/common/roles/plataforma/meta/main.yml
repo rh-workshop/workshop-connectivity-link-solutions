@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: plataforma
+  author: workshop-connectivity-link
+  description: Verifica (o instala lo que falte de) los operadores y CRs base del taller sin tocar lo existente.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

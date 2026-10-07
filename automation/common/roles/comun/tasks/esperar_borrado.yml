@@ -1,0 +1,15 @@
+---
+# Espera a que un recurso (o todos los que casan con un selector) desaparezca.
+#   vars: borrado_api_version, borrado_kind, borrado_nombre | borrado_selector,
+#         borrado_namespace (opcional), borrado_reintentos (opcional)
+- name: "Esperar a que desaparezca {{ borrado_kind }} {{ borrado_nombre | default(borrado_selector | default('')) }}"
+  kubernetes.core.k8s_info:
+    api_version: "{{ borrado_api_version }}"
+    kind: "{{ borrado_kind }}"
+    name: "{{ borrado_nombre | default(omit) }}"
+    namespace: "{{ borrado_namespace | default(omit) }}"
+    label_selectors: "{{ [borrado_selector] if borrado_selector is defined else omit }}"
+  register: comun_borrado
+  until: comun_borrado.resources | default([]) | length == 0
+  retries: "{{ borrado_reintentos | default(k8s_espera_reintentos) }}"
+  delay: "{{ k8s_espera_intervalo }}"

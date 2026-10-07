@@ -1,0 +1,18 @@
+# Plano de control Service Mesh 3 (instalacion-istio.adoc). Solo se crea si NO
+# existe: el Istio del clúster puede llevar meshConfig de tracing/access logs
+# (Lab 5) que este rol nunca toca.
+apiVersion: sailoperator.io/v1
+kind: IstioCNI
+metadata:
+  name: default
+spec:
+  namespace: istio-cni
+  profile: openshift
+---
+apiVersion: sailoperator.io/v1
+kind: Istio
+metadata:
+  name: default
+spec:
+  namespace: istio-system
+  profile: openshift

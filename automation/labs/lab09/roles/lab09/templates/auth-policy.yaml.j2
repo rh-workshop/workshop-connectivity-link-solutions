@@ -1,0 +1,40 @@
+# Lab 9 · paso 4: la autenticación userkey de APIcast (cabecera user-key) pasa
+# a una AuthPolicy de ruta con apiKey. allNamespaces es necesario (sin él, toda
+# clave válida da 401). Exporta app y plan para la cuota.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: bank-3scale-auth-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: bank-3scale-route-{{ lab_id }}
+  rules:
+    authentication:
+      "user-key":
+        apiKey:
+          selector:
+            matchLabels:
+              kuadrant.io/3scale-product: bank-api-{{ lab_id }}
+          allNamespaces: true
+        credentials:
+          customHeader:
+            name: user-key
+    response:
+      unauthenticated:
+        code: 401
+        message:
+          value: "Authentication parameters missing"
+      success:
+        filters:
+          "identity":
+            json:
+              properties:
+                "app":
+                  selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/app
+                "plan":
+                  selector: auth.identity.metadata.annotations.secret\.kuadrant\.io/plan

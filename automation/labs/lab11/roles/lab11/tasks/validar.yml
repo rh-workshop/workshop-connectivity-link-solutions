@@ -1,0 +1,313 @@
+---
+# «Comprueba el resultado» del Lab 11, en el orden del lab. Cada variante se
+# aplica, se prueba y la siguiente la sustituye; al final queda el estado final
+# (IP + JWT con la IP del ejecutor, sin override ni AuthorizationPolicy).
+- name: Calcular nombres e IP pública
+  ansible.builtin.import_tasks: hechos.yml
+
+- name: Pedir el token de alice
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: token_keycloak
+  vars:
+    token_usuario: alice
+
+# --- Paso 4 · PROXY protocol ------------------------------------------------
+- name: Leer el Service y el Deployment generados para el Gateway B2B
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.v }}"
+    kind: "{{ item.k }}"
+    name: "{{ lab11_gateway }}-{{ gateway_class }}"
+    namespace: "{{ wk_ns_gateway }}"
+  loop:
+    - {v: v1, k: Service}
+    - {v: apps/v1, k: Deployment}
+  loop_control:
+    label: "{{ item.k }}"
+  register: lab11_generados
+
+- name: Comprobar las dos anotaciones de PROXY protocol (ELB y Envoy)
+  ansible.builtin.assert:
+    that:
+      - (lab11_svc.metadata.annotations | default({}))['service.beta.kubernetes.io/aws-load-balancer-proxy-protocol'] | default('') == '*'
+      - (lab11_dep.spec.template.metadata.annotations | default({}))['proxy.istio.io/config'] | default('') is search('proxyProtocol')
+      - lab11_svc.spec.type == 'LoadBalancer'
+    fail_msg: "Falta una de las dos anotaciones de PROXY protocol: si solo está una, TODAS las conexiones fallan."
+    success_msg: "PROXY protocol en el Service LoadBalancer (ELB) y en el pod (Envoy)."
+  vars:
+    lab11_svc: "{{ lab11_generados.results[0].resources[0] }}"
+    lab11_dep: "{{ lab11_generados.results[1].resources[0] }}"
+
+- name: El Gateway ve la IP real aunque X-Forwarded-For venga falsificada
+  block:
+    - name: Llamar a socios-… con X-Forwarded-For falsificada
+      ansible.builtin.uri:
+        url: "{{ lab11_soc_url }}"
+        headers:
+          Authorization: "Bearer {{ wk_token }}"
+          X-Forwarded-For: 203.0.113.10
+        validate_certs: false
+        return_content: true
+        status_code: [-1, 200, 401, 403, 500, 502, 503]
+        timeout: 15
+      register: lab11_eco
+      until: lab11_eco.status == 200 and (lab11_eco.json.x_envoy_external_address | default('')) == wk_lab11_ip
+      retries: "{{ http_reintentos }}"
+      delay: 5
+      no_log: true
+  rescue:
+    - name: Fallar si Envoy no recibe la IP real
+      ansible.builtin.fail:
+        msg: >-
+          Se esperaba x_envoy_external_address={{ wk_lab11_ip }} y se obtuvo HTTP {{ lab11_eco.status | default('?') }}
+          {{ lab11_eco.json | default({}) | dict2items | selectattr('key', 'in', ['x_forwarded_for', 'x_envoy_external_address']) | items2dict }}.
+          El ELB tarda ~30 s en aplicar PROXY protocol.
+
+- name: Comprobar que la cabecera falsificada no sustituye a la IP real
+  ansible.builtin.assert:
+    that:
+      - lab11_eco.json.x_forwarded_for is match('^203\.0\.113\.10,')
+      - wk_lab11_ip in (lab11_eco.json.x_forwarded_for.split(',') | map('trim') | list)
+      - lab11_eco.json.x_envoy_external_address == wk_lab11_ip
+    fail_msg: "X-Forwarded-For inesperada: {{ lab11_eco.json.x_forwarded_for }}"
+    success_msg: >-
+      x_envoy_external_address={{ lab11_eco.json.x_envoy_external_address }} · X-Forwarded-For={{ lab11_eco.json.x_forwarded_for }}
+
+# --- Pasos 5 a 8 · filtros por IP en socios-… --------------------------------
+- name: Allowlist, denylist, rangos e IP + JWT
+  ansible.builtin.include_tasks: socios_paso.yml
+  loop:
+    - nombre: "allowlist con mi IP"
+      modo: anonima
+      predicado: 'source.address.split(":")[0] in ["{{ wk_lab11_ip }}"]'
+      pruebas: [{token: false, esperado: 200}]
+    - nombre: "allowlist con otra IP"
+      modo: anonima
+      predicado: 'source.address.split(":")[0] in ["203.0.113.10"]'
+      pruebas: [{token: false, esperado: 403}]
+  loop_control:
+    loop_var: paso
+    label: "{{ paso.nombre }}"
+
+- name: Leer el rechazo de la allowlist
+  ansible.builtin.uri:
+    url: "{{ lab11_soc_url }}"
+    validate_certs: false
+    return_content: true
+    status_code: 403
+  register: lab11_rechazo
+
+- name: Comprobar el 403 en JSON con la IP real
+  ansible.builtin.assert:
+    that:
+      - lab11_rechazo.content_type is search('application/json')
+      - (lab11_rechazo.content | from_json).error == 'ip_no_permitida'
+      - (lab11_rechazo.content | from_json).ip == wk_lab11_ip
+    fail_msg: "Rechazo inesperado: {{ lab11_rechazo.content_type | default('') }} {{ lab11_rechazo.content | default('') }}"
+    success_msg: "403 application/json: {{ lab11_rechazo.content }}"
+
+- name: Denylist, rangos e IP + JWT
+  ansible.builtin.include_tasks: socios_paso.yml
+  loop:
+    - nombre: "denylist sin mi IP"
+      modo: anonima
+      predicado: '!(source.address.split(":")[0] in ["203.0.113.10", "198.51.100.7"])'
+      pruebas: [{token: false, esperado: 200}]
+    - nombre: "denylist con mi IP"
+      modo: anonima
+      predicado: '!(source.address.split(":")[0] in ["{{ wk_lab11_ip }}", "198.51.100.7"])'
+      pruebas: [{token: false, esperado: 403}]
+    - nombre: "rango /8 propio por regex"
+      modo: anonima
+      predicado: 'source.address.split(":")[0].matches("^{{ wk_lab11_ip.split(".")[0] }}\\.")'
+      pruebas: [{token: false, esperado: 200}]
+    - nombre: "rango 203.0.113.0/24 ajeno por regex"
+      modo: anonima
+      predicado: 'source.address.split(":")[0].matches("^203\\.0\\.113\\.")'
+      pruebas: [{token: false, esperado: 403}]
+    - nombre: "IP permitida + JWT"
+      modo: jwt
+      predicado: 'source.address.split(":")[0] == "{{ wk_lab11_ip }}"'
+      pruebas: [{token: true, esperado: 200}, {token: false, esperado: 401}]
+    - nombre: "IP no permitida + JWT"
+      modo: jwt
+      predicado: 'source.address.split(":")[0] == "203.0.113.10"'
+      pruebas: [{token: true, esperado: 403}, {token: false, esperado: 401}]
+    - nombre: "estado final · IP permitida + JWT"
+      modo: jwt
+      predicado: 'source.address.split(":")[0] == "{{ wk_lab11_ip }}"'
+      pruebas: [{token: true, esperado: 200}]
+  loop_control:
+    loop_var: paso
+    label: "{{ paso.nombre }}"
+
+# --- Pasos 12 y 13 · mTLS en dos capas --------------------------------------
+- name: Capa 1 (Envoy) y capa 2 (Authorino x509), con control positivo mTLS
+  ansible.builtin.include_tasks: probar_b2b.yml
+  loop:
+    - {b2b_prueba: "sin certificado (falla el saludo TLS)", b2b_cert: "", b2b_esperado: -1}
+    - {b2b_prueba: "certificado de otra CA (unknown ca)", b2b_cert: falso, b2b_esperado: -1}
+    - {b2b_prueba: "socio-otro · misma CA, otra organización", b2b_cert: socio-otro, b2b_esperado: 403}
+    - {b2b_prueba: "socio-acme · ACME Pagos", b2b_cert: socio-acme, b2b_esperado: 200}
+  loop_control:
+    label: "{{ item.b2b_prueba }}"
+  vars:
+    b2b_prueba: "{{ item.b2b_prueba }}"
+    b2b_cert: "{{ item.b2b_cert }}"
+    b2b_esperado: "{{ item.b2b_esperado }}"
+
+- name: Comprobar la identidad que la capa 2 inyecta al backend
+  ansible.builtin.assert:
+    that:
+      - lab11_b2b.json.x_client_common_name == 'socio-acme'
+      - wk_lab11_ip in (lab11_b2b.json.x_forwarded_for.split(',') | map('trim') | list)
+      - lab11_b2b.json.x_envoy_external_address == wk_lab11_ip
+    fail_msg: "El backend recibió x_client_common_name={{ lab11_b2b.json.x_client_common_name | default('?') }}"
+    success_msg: "socio-acme → 200 con x_client_common_name=socio-acme e IP real {{ wk_lab11_ip }}."
+
+# --- Paso 9 · override merge en el Gateway ------------------------------------
+- name: Bloqueo corporativo en todo el Gateway (overrides + merge) y su retirada
+  block:
+    - name: Aplicar el override del Gateway con mi IP bloqueada
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        server_side_apply:
+          field_manager: "{{ k8s_field_manager }}"
+        template: gw-override.yaml.j2
+
+    - name: Pedir un token nuevo de alice
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: token_keycloak
+      vars:
+        token_usuario: alice
+
+    - name: socios-… con token válido queda bloqueado por el Gateway
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_http
+      vars:
+        http_prueba: "Lab 11 · override del Gateway en socios"
+        http_url: "{{ lab11_soc_url }}"
+        http_esperado: 403
+        http_intervalo: 3
+        http_no_log: true
+        http_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+
+    - name: b2b-… con el certificado bueno queda bloqueado por el Gateway
+      ansible.builtin.include_tasks: probar_b2b.yml
+      vars:
+        b2b_prueba: "override del Gateway en b2b (socio-acme)"
+        b2b_cert: socio-acme
+        b2b_esperado: 403
+
+    - name: Con merge, las políticas de ruta siguen Enforced (no Overridden)
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: AuthPolicy
+        espera_nombre: "{{ item }}-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_app }}"
+        espera_condicion: Enforced
+      loop: [socios-auth, b2b-auth]
+  always:
+    - name: Retirar el override del Gateway
+      kubernetes.core.k8s:
+        state: absent
+        api_version: kuadrant.io/v1
+        kind: AuthPolicy
+        name: "b2b-gw-ip-{{ lab_id }}"
+        namespace: "{{ wk_ns_gateway }}"
+        wait: true
+
+- name: Sin el override, socios-… vuelve a 200
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: probar_http
+  vars:
+    http_prueba: "Lab 11 · socios sin el override"
+    http_url: "{{ lab11_soc_url }}"
+    http_esperado: 200
+    http_intervalo: 3
+    http_no_log: true
+    http_cabeceras:
+      Authorization: "Bearer {{ wk_token }}"
+
+- name: Sin el override, b2b-… vuelve a 200
+  ansible.builtin.include_tasks: probar_b2b.yml
+  vars:
+    b2b_prueba: "b2b sin el override (socio-acme)"
+    b2b_cert: socio-acme
+    b2b_esperado: 200
+
+# --- Paso 10 · AuthorizationPolicy de Istio (opcional) ------------------------
+- name: DENY por CIDR con Istio y su retirada
+  when: lab11_probar_istio | bool
+  block:
+    - name: Bloquear mi IP con remoteIpBlocks
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        server_side_apply:
+          field_manager: "{{ k8s_field_manager }}"
+        template: istio-authz.yaml.j2
+      vars:
+        lab11_bloque: "{{ wk_lab11_ip }}/32"
+
+    - name: Istio rechaza antes de llegar a Authorino
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_http
+      vars:
+        http_prueba: "Lab 11 · AuthorizationPolicy DENY sobre mi IP"
+        http_url: "{{ lab11_soc_url }}"
+        http_esperado: 403
+        http_intervalo: 3
+        http_no_log: true
+        http_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+
+    - name: Bloquear otro rango
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        server_side_apply:
+          field_manager: "{{ k8s_field_manager }}"
+        template: istio-authz.yaml.j2
+      vars:
+        lab11_bloque: 203.0.113.0/24
+
+    - name: Con otro rango bloqueado, mi IP pasa
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: probar_http
+      vars:
+        http_prueba: "Lab 11 · AuthorizationPolicy DENY sobre otro rango"
+        http_url: "{{ lab11_soc_url }}"
+        http_esperado: 200
+        http_intervalo: 3
+        http_no_log: true
+        http_cabeceras:
+          Authorization: "Bearer {{ wk_token }}"
+  always:
+    - name: Retirar la AuthorizationPolicy de Istio
+      kubernetes.core.k8s:
+        state: absent
+        api_version: security.istio.io/v1
+        kind: AuthorizationPolicy
+        name: "b2b-deny-ip-{{ lab_id }}"
+        namespace: "{{ wk_ns_gateway }}"
+        wait: true
+
+- name: Resumen del Lab 11
+  ansible.builtin.debug:
+    msg:
+      - "Lab 11 OK · IP real {{ wk_lab11_ip }} vía PROXY protocol (la X-Forwarded-For falsificada no la sustituye)"
+      - "socios: allowlist 200/403 JSON · denylist 200/403 · regex /8 200 · /24 ajeno 403 · IP+JWT 200/401/403/401"
+      - "Override merge del Gateway: 403 en socios y b2b, políticas de ruta Enforced; 200 al retirarlo"
+      - "b2b mTLS: sin cert y otra CA → fallo TLS · socio-otro 403 · socio-acme 200 (CN socio-acme)"
+      - "Certificados de cliente en {{ lab11_dir_local }}"

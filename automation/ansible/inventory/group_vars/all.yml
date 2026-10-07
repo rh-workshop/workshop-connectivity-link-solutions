@@ -1,0 +1,107 @@
+---
+# ============================================================================
+# Variables del taller Red Hat Connectivity Link 1.4.3
+# Valores de EJEMPLO del clúster de desarrollo (OCP 4.22 en AWS). Cámbialos o
+# sobrescríbelos con -e / --extra-vars @mi-entorno.yml. NUNCA pongas aquí un
+# secreto: van por variables de entorno o por un fichero cifrado con
+# ansible-vault (ver automation/README.md, sección «Secretos»).
+# ============================================================================
+
+# --- Participante -----------------------------------------------------------
+# Identificador del participante: deriva namespaces, hostname y realm.
+#   atp-<lab_id> · gateway-<lab_id> · api-<lab_id>.<zona> · realm-<N> (user7 -> realm-7)
+lab_id: auto
+
+# --- Clúster y red ----------------------------------------------------------
+# Barrera de seguridad: si no está vacío, todo playbook falla cuando el
+# kubeconfig activo apunta a otra API (evita actuar sobre el clúster equivocado).
+openshift_api_esperada: https://api.cluster.example.com:6443
+# Dominio *.apps del clúster. Vacío = se autodetecta (ingresses.config/cluster).
+ocp_domain: ""
+# Zona DNS de las APIs. Vacío = el dominio *.apps (camino sin balanceador).
+workshop_zone: labs.example.com
+# Cómo recibe tráfico el Gateway:
+#   loadbalancer -> Service LoadBalancer (balanceador cloud o MetalLB) + DNSPolicy
+#   route        -> Route passthrough sobre *.apps (on-prem sin balanceador)
+entrada_modo: loadbalancer
+# Opcional: subnets públicas seleccionadas por el instructor, en valores privados.
+# Lista vacía conserva el comportamiento anterior del controlador AWS.
+aws_load_balancer_subnet_ids: []
+# Excepción por Gateway; false usa el ConfigMap compartido de la clase Istio.
+aws_gateway_subnets_override: false
+# GatewayClass del proveedor de Gateway API: istio (OSSM 3) u openshift-default.
+gateway_class: istio
+gateway_class_controlador:
+  istio: istio.io/gateway-controller
+  openshift-default: openshift.io/gateway-controller/v1
+
+# --- TLS y DNS --------------------------------------------------------------
+tls_issuer_name: workshop-selfsigned
+# DNSPolicy: solo tiene efecto con entrada_modo=loadbalancer.
+dns_policy_habilitada: true
+dns_provider_secret: dns-provider-aws
+dns_provider_tipo: kuadrant.io/aws
+# Origen del Secret del proveedor DNS que se copia al namespace del Gateway.
+# Alternativa: definir dns_provider_datos (dict con AWS_ACCESS_KEY_ID,
+# AWS_SECRET_ACCESS_KEY, AWS_REGION) desde ansible-vault; si existe, gana.
+dns_provider_secret_origen_namespace: gateway-admin
+
+# --- Keycloak (RHBK) --------------------------------------------------------
+keycloak_namespace: keycloak
+keycloak_cr_nombre: keycloak
+# Hostname de Keycloak. Vacío = se autodetecta del CR Keycloak.
+keycloak_host: ""
+keycloak_validate_certs: true
+# Credenciales del admin del realm master: por entorno (KC_ADMIN_USER /
+# KC_ADMIN_PASSWORD) o, si no están, del Secret bootstrap del operador.
+keycloak_admin_realm: master
+keycloak_admin_secret: keycloak-bootstrap-admin
+# Usuarios de demostración. alice/bob son las contraseñas publicadas en el
+# material del taller; en un entorno real sobrescríbelas desde vault.
+keycloak_usuarios_password:
+  alice: alice
+  bob: bob
+
+# --- Plataforma (operadores) ------------------------------------------------
+# true  = solo comprueba que todo está instalado y sano (no escribe nada).
+# false = instala lo que falte; lo que ya existe se detecta y se deja intacto.
+plataforma_verificar_solo: true
+plataforma_operadores:
+  - nombre: rhcl-operator
+    namespace: kuadrant-system
+    canal: stable
+    csv_prefijo: rhcl-operator
+    og_all_namespaces: true
+  - nombre: servicemeshoperator3
+    namespace: openshift-operators
+    canal: stable
+    csv_prefijo: servicemeshoperator3
+    og_all_namespaces: true
+    solo_si_gateway_class: istio
+  - nombre: openshift-cert-manager-operator
+    namespace: cert-manager-operator
+    canal: stable-v1
+    csv_prefijo: cert-manager-operator
+    og_all_namespaces: true
+  - nombre: rhbk-operator
+    namespace: keycloak
+    canal: stable-v26.6
+    csv_prefijo: rhbk-operator
+    og_all_namespaces: false
+# Dependencias que OLM instala en cascada con rhcl-operator (se verifican).
+plataforma_csv_dependencias:
+  - authorino-operator
+  - limitador-operator
+  - dns-operator
+# cert-manager: resolvers públicos para DNS-01 (solo emisores ACME en nube).
+plataforma_certmanager_dns01_publico: false
+plataforma_certmanager_resolvers: "8.8.8.8:53,1.1.1.1:53"
+
+# --- Esperas y gestión de recursos -------------------------------------------
+k8s_field_manager: workshop-ansible
+k8s_espera_reintentos: 60
+k8s_espera_intervalo: 5
+# Resolver local: cubre el TTL negativo de la zona (900 s en RHDP) si cacheó un NXDOMAIN.
+dns_espera_local_reintentos: 200
+http_reintentos: 24
+http_intervalo: 5

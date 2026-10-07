@@ -1,0 +1,18 @@
+---
+# Instancia aislada: el operador es compartido, el acceso de plataforma va aparte.
+- name: Plataforma · instancia Argo CD con RBAC acotado
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - name: Exigir guardias privadas de API y UID para ambas operaciones
+      ansible.builtin.assert:
+        that:
+          - openshift_api_esperada | default('') | length > 0
+          - openshift_cluster_uid_esperado | default('') | length > 0
+        quiet: true
+      tags: [always]
+  roles:
+    - role: comun
+      tags: [always]
+    - role: platform_argocd
+      tags: [platform_argocd]

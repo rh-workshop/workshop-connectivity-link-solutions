@@ -1,0 +1,36 @@
+---
+# Prueba HTTP contra la API publicada: repite hasta obtener el código esperado
+# (las políticas tardan unos segundos en reconciliarse) y falla con un mensaje
+# claro si no lo consigue.
+#   vars: http_prueba (texto), http_url, http_esperado (int),
+#         http_cabeceras (dict, opcional), http_reintentos_prueba (opcional)
+#         http_validar_tls (bool, opcional),
+#         http_json_contract: [{path: expresión JMESPath, equals: valor esperado}]
+# El contrato es opcional y conserva tipos; no descarga cuerpo para pruebas solo HTTP.
+- name: "Probar · {{ http_prueba }} → {{ http_esperado }}"
+  block:
+    - name: "Petición HTTPS · {{ http_prueba }}"
+      ansible.builtin.uri:
+        url: "{{ http_url }}"
+        method: "{{ http_metodo }}"
+        headers: "{{ http_cabeceras }}"
+        validate_certs: "{{ http_validar_tls | default(false) | bool }}"
+        status_code: [-1, 200, 401, 403, 404, 429, 500, 502, 503]
+        timeout: 15
+        return_content: "{{ http_json_contract | default([]) | length > 0 }}"
+      register: comun_http
+      until: comun_http.status == (http_esperado | int)
+      retries: "{{ http_reintentos_prueba | default(http_reintentos) }}"
+      delay: "{{ http_intervalo }}"
+      no_log: "{{ http_no_log | default(false) }}"
+
+    - name: Validar el contrato JSON publicado de la respuesta obtenida
+      ansible.builtin.import_tasks: validar_http_contrato.yml
+
+  rescue:
+    - name: "Fallar · {{ http_prueba }}"
+      ansible.builtin.fail:
+        msg: >-
+          {{ http_prueba }}: no se cumple el código HTTP o el contrato JSON esperado.
+          HTTP esperado {{ http_esperado }}; recibido {{ comun_http.status | default('sin respuesta') }}.
+      no_log: "{{ http_no_log | default(false) }}"

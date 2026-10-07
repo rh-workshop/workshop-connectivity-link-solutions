@@ -1,0 +1,32 @@
+---
+# Borra el slice del participante. Ejecutar DESPUÉS de limpiar el Lab 3 (así la
+# DNSPolicy se borra antes que el Gateway y el DNS Operator limpia Route 53).
+- name: Borrar los namespaces del participante
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+    wait: true
+    wait_timeout: 600
+  loop:
+    - "{{ wk_ns_app }}"
+    - "{{ wk_ns_gateway }}"
+
+- name: Borrar los RoleBindings de lectura en namespaces de operadores
+  kubernetes.core.k8s:
+    state: absent
+    api_version: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    name: "{{ lab_id }}-operator-view"
+    namespace: "{{ item }}"
+  loop:
+    - kuadrant-system
+    - "{{ tenant_ns_cert_manager }}"
+
+- name: Borrar el ClusterRoleBinding de lectura de GatewayClasses
+  kubernetes.core.k8s:
+    state: absent
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    name: "{{ lab_id }}-gatewayclass-view"

@@ -1,0 +1,53 @@
+# Lab 12 · paso 6: Redis de DEMOSTRACIÓN (sin persistencia ni réplica) para los
+# contadores de Limitador. El operador solo lee la clave URL del Secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: limitador-redis
+  namespace: kuadrant-system
+  labels:
+    app: limitador-redis
+    workshop.module: connectivity-link
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: limitador-redis
+  template:
+    metadata:
+      labels:
+        app: limitador-redis
+    spec:
+      containers:
+        - name: redis
+          image: {{ lab12_redis_imagen }}
+          ports:
+            - containerPort: 6379
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: limitador-redis
+  namespace: kuadrant-system
+  labels:
+    workshop.module: connectivity-link
+spec:
+  selector:
+    app: limitador-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: limitador-redis
+  namespace: kuadrant-system
+  labels:
+    workshop.module: connectivity-link
+type: Opaque
+stringData:
+  URL: redis://limitador-redis.kuadrant-system.svc.cluster.local:6379

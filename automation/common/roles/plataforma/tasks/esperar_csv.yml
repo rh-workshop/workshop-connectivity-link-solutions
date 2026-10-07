@@ -1,0 +1,30 @@
+---
+# Espera a que un CSV cuyo nombre empieza por csv_prefijo esté Succeeded.
+- name: "Esperar CSV {{ csv_prefijo }}* Succeeded en {{ csv_namespace }}"
+  block:
+    - name: "Consultar CSVs de {{ csv_namespace }}"
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ csv_namespace }}"
+      register: plataforma_csvs
+      until: >-
+        plataforma_csvs.resources
+        | selectattr('metadata.name', 'match', csv_prefijo ~ '\.')
+        | selectattr('status.phase', 'defined')
+        | selectattr('status.phase', 'equalto', 'Succeeded') | list | length > 0
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: "Fallar: el operador {{ csv_prefijo }} no está Succeeded"
+      ansible.builtin.fail:
+        msg: >-
+          No hay un CSV {{ csv_prefijo }}.* en Succeeded en {{ csv_namespace }}. Encontrados:
+          {{ plataforma_csvs.resources | default([]) | map(attribute='metadata.name') | list }}
+
+- name: "Registrar la versión instalada de {{ csv_prefijo }}"
+  ansible.builtin.set_fact:
+    plataforma_versiones: >-
+      {{ plataforma_versiones | default({}) | combine({csv_prefijo:
+         (plataforma_csvs.resources | selectattr('metadata.name', 'match', csv_prefijo ~ '\.')
+          | selectattr('status.phase', 'equalto', 'Succeeded') | map(attribute='metadata.name') | first)}) }}

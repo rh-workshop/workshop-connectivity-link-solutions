@@ -1,0 +1,23 @@
+---
+- name: Exigir propiedad del operador sin tracking ni campos gestionados por Argo CD
+  ansible.builtin.assert:
+    that:
+      - console_plugin_actual.resources | length == 1
+      - console_plugin_actual.resources[0].metadata.name == console_plugin_deployment
+      - console_plugin_actual.resources[0].metadata.namespace == console_plugin_namespace
+      - console_plugin_actual.resources[0].metadata.labels['app.kubernetes.io/managed-by'] | default('') == 'kuadrant-operator'
+      - console_plugin_actual.resources[0].metadata.labels['app.kubernetes.io/name'] | default('') == console_plugin_deployment
+      - console_plugin_actual.resources[0].metadata.labels['app.kubernetes.io/instance'] | default('') == console_plugin_deployment
+      - "'argocd.argoproj.io/tracking-id' not in (console_plugin_actual.resources[0].metadata.annotations | default({}))"
+      - "'argocd.argoproj.io/installation-id' not in (console_plugin_actual.resources[0].metadata.annotations | default({}))"
+      - "'argocd.argoproj.io/instance' not in console_plugin_actual.resources[0].metadata.labels"
+      - >-
+        console_plugin_actual.resources[0].metadata.managedFields | default([])
+        | selectattr('manager', 'defined') | selectattr('manager', 'search', '(?i)argocd') | list | length == 0
+      - >-
+        console_plugin_actual.resources[0].metadata.ownerReferences | default([])
+        | selectattr('kind', 'equalto', 'Application') | list | length == 0
+    fail_msg: >-
+      El Deployment no es inequívocamente generado por Kuadrant o tiene seguimiento Argo CD.
+      Se rechaza escribir: retíralo del desired state y revisa propiedad antes del workaround.
+    quiet: true

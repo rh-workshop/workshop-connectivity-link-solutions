@@ -1,0 +1,200 @@
+---
+# Lab 7 · Publicar la API en la nube (https://rh-workshop.github.io/workshop-connectivity-link/lab7-cloud.html):
+# segundo Gateway con balanceador del proveedor, DNSPolicy en la zona pública y
+# certificado ACME (Let's Encrypt, DNS-01). Solo aplica con balanceador.
+
+- name: Avisar de que el Lab 7 no aplica sin balanceador
+  ansible.builtin.debug:
+    msg: >-
+      Lab 7 omitido: entrada_modo={{ entrada_modo }}. Este laboratorio necesita un clúster en nube con Service
+      LoadBalancer y una zona DNS pública; en bare-metal sin balanceador no aplica (lab7-cloud.adoc).
+  when: entrada_modo != 'loadbalancer'
+
+- name: Terminar el rol si no hay balanceador
+  ansible.builtin.meta: end_role
+  when: entrada_modo != 'loadbalancer'
+
+- name: Comprobar el ClusterIssuer ACME del instructor (Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: ClusterIssuer
+    espera_nombre: "{{ lab07_acme_issuer }}"
+    espera_condicion: Ready
+    espera_reintentos: 3
+
+# Nota del instructor en el lab: el segundo Gateway necesita un segundo Service
+# LoadBalancer. Se aplica la cuota COMPLETA (con el mismo field manager que el
+# rol tenant) cambiando solo services.loadbalancers.
+- name: Leer la cuota del namespace del Gateway
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ResourceQuota
+    name: workshop-quota
+    namespace: "{{ wk_ns_gateway }}"
+  register: lab07_cuota
+
+- name: Subir la cuota de balanceadores a {{ lab07_cuota_balanceadores }}
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    definition:
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        name: workshop-quota
+        namespace: "{{ wk_ns_gateway }}"
+      spec:
+        hard: "{{ lab07_cuota.resources[0].spec.hard | combine({'services.loadbalancers': lab07_cuota_balanceadores | string}) }}"
+  when:
+    - lab07_cuota.resources | length > 0
+    - lab07_cuota.resources[0].spec.hard['services.loadbalancers'] | default('0') | int < lab07_cuota_balanceadores | int
+
+# Paso 4 · Credenciales del proveedor DNS en el namespace del Gateway.
+- name: Preparar el Secret del proveedor DNS de la zona pública
+  ansible.builtin.import_tasks: dns_secret.yml
+
+# Paso 2 · Gateway con el hostname público.
+- name: Crear el Gateway de la nube
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: gateway-cloud.yaml.j2
+
+- name: Esperar a que el controlador acepte el Gateway de la nube
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: gateway.networking.k8s.io/v1
+    espera_kind: Gateway
+    espera_nombre: "{{ lab07_gateway }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Accepted
+
+# Paso 3 · El proveedor asigna el balanceador: Programmed=True con dirección.
+- name: Esperar a la dirección del balanceador (Programmed)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: gateway.networking.k8s.io/v1
+    espera_kind: Gateway
+    espera_nombre: "{{ lab07_gateway }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Programmed
+
+# Paso 5 · La DNSPolicy solo escribe registros para listeners con ruta adjunta.
+- name: Adjuntar la ruta de bank-api al Gateway de la nube
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: httproute-cloud.yaml.j2
+
+- name: Esperar a que el Gateway de la nube acepte la ruta (Accepted y ResolvedRefs)
+  block:
+    - name: Consultar el estado de la HTTPRoute en el Gateway de la nube
+      kubernetes.core.k8s_info:
+        api_version: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        name: "api-route-cloud-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+      register: lab07_ruta
+      vars:
+        lab07_conds: >-
+          {{ lab07_ruta.resources[0].status.parents | default([])
+             | selectattr('parentRef.name', 'equalto', lab07_gateway)
+             | map(attribute='conditions') | flatten
+             | selectattr('status', 'equalto', 'True') | map(attribute='type') | list
+             if lab07_ruta.resources | default([]) | length > 0 else [] }}
+      until: "'Accepted' in lab07_conds and 'ResolvedRefs' in lab07_conds"
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Fallar con el estado de la HTTPRoute
+      ansible.builtin.fail:
+        msg: >-
+          La HTTPRoute api-route-cloud-{{ lab_id }} no quedó Accepted/ResolvedRefs en {{ lab07_gateway }}:
+          {{ lab07_ruta.resources[0].status.parents | default('sin estado') | to_json }}
+
+# Paso 6 · Publicar el nombre en la zona pública.
+- name: Publicar el nombre con DNSPolicy
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: dns-policy-cloud.yaml.j2
+
+- name: Esperar a la DNSPolicy Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: DNSPolicy
+    espera_nombre: "dns-policy-cloud-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Enforced
+
+- name: Esperar al DNSRecord de la zona pública (Ready)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1alpha1
+    espera_kind: DNSRecord
+    espera_nombre: "{{ lab07_gateway }}-https"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Ready
+
+# Paso 8 · Certificado de confianza con el emisor ACME.
+- name: Solicitar el certificado público con TLSPolicy
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: tls-policy-cloud.yaml.j2
+
+- name: Esperar al Certificate ACME (desafío DNS-01)
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: cert-manager.io/v1
+    espera_kind: Certificate
+    espera_nombre: "{{ lab07_gateway }}-https"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Ready
+    espera_reintentos: "{{ lab07_certificado_reintentos }}"
+
+# Paso 7 · Resolución desde fuera (autoritativos y resolver de esta máquina).
+- name: Leer la zona en la que la DNSPolicy publicó el registro
+  kubernetes.core.k8s_info:
+    api_version: kuadrant.io/v1alpha1
+    kind: DNSRecord
+    name: "{{ lab07_gateway }}-https"
+    namespace: "{{ wk_ns_gateway }}"
+  register: lab07_dnsrecord
+
+- name: Esperar a que el hostname público resuelva
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_dns
+  vars:
+    dns_nombre: "{{ lab07_host }}"
+    dns_zona: "{{ lab07_dnsrecord.resources[0].status.zoneDomainName | default(omit) }}"
+
+- name: Validar el Lab 7
+  ansible.builtin.import_tasks: validar.yml
+  when: lab07_validar | bool
+  tags: [validar]

@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: lab10
+  author: workshop-connectivity-link
+  description: Lab 10 · Techo de cuota con overrides, M2M client_credentials con scopes por método y canary 90/10 con Deprecation/Sunset.
+  min_ansible_version: "2.16"
+  platforms:
+    - name: GenericLinux
+dependencies: []

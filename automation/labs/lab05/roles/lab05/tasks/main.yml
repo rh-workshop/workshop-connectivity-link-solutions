@@ -1,0 +1,86 @@
+---
+# Lab 5 · Observar el tráfico (https://rh-workshop.github.io/workshop-connectivity-link/lab5.html).
+# La plataforma de observabilidad es cluster-scoped y la prepara el instructor:
+# por defecto solo se verifica. Lo del participante (Telemetry de access logs y
+# etiquetas de la HTTPRoute) lo crea este rol.
+
+- name: Instalar lo que falte de la plataforma de observabilidad
+  ansible.builtin.include_tasks: plataforma_instalar.yml
+  when: not lab05_plataforma_verificar_solo | bool
+
+- name: Verificar la plataforma de observabilidad
+  ansible.builtin.import_tasks: plataforma_verificar.yml
+
+# Paso 1 · El PodMonitor lo crea el operador de Kuadrant (observability.enable)
+# en cada namespace que tiene un Gateway; no se crea a mano.
+- name: Esperar al PodMonitor istio-pod-monitor del namespace del Gateway
+  block:
+    - name: Consultar el PodMonitor que crea Kuadrant para el Gateway
+      kubernetes.core.k8s_info:
+        api_version: monitoring.coreos.com/v1
+        kind: PodMonitor
+        namespace: "{{ wk_ns_gateway }}"
+        label_selectors:
+          - kuadrant.io/observability=true
+      register: lab05_podmonitor
+      until: lab05_podmonitor.resources | selectattr('metadata.name', 'equalto', 'istio-pod-monitor') | list | length > 0
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Fallar si Kuadrant no creó el PodMonitor
+      ansible.builtin.fail:
+        msg: >-
+          No hay PodMonitor istio-pod-monitor en {{ wk_ns_gateway }}. Revisa que el CR Kuadrant tenga
+          spec.observability.enable=true y que el Gateway {{ wk_gateway }} exista (Lab 3).
+
+# Paso 4 · El EnvoyFilter de tracing lo genera Kuadrant por Gateway cuando el CR
+# Kuadrant define observability.tracing.defaultEndpoint.
+- name: Esperar al EnvoyFilter de tracing del Gateway
+  block:
+    - name: Consultar el EnvoyFilter kuadrant-tracing del Gateway
+      kubernetes.core.k8s_info:
+        api_version: networking.istio.io/v1alpha3
+        kind: EnvoyFilter
+        name: "kuadrant-tracing-{{ wk_gateway }}"
+        namespace: "{{ wk_ns_gateway }}"
+      register: lab05_envoyfilter
+      until: lab05_envoyfilter.resources | length > 0
+      retries: "{{ k8s_espera_reintentos }}"
+      delay: "{{ k8s_espera_intervalo }}"
+  rescue:
+    - name: Fallar si no hay EnvoyFilter de tracing
+      ansible.builtin.fail:
+        msg: >-
+          No existe el EnvoyFilter kuadrant-tracing-{{ wk_gateway }} en {{ wk_ns_gateway }}: el CR Kuadrant
+          no tiene spec.observability.tracing.defaultEndpoint o el operador aún no reconcilió.
+
+# Paso 6 · Access log solo de errores en el Gateway del participante.
+- name: Registrar en el access log solo las respuestas de error (Telemetry)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: telemetry-access-logs.yaml.j2
+
+# Paso 8 · Etiquetas service/deployment que usan los dashboards de Grafana.
+# Server-side apply con field manager propio: solo gestiona esas dos etiquetas
+# y no toca el spec de la HTTPRoute, que es del Lab 4A.
+- name: Etiquetar la HTTPRoute con el Service y el Deployment a los que enruta
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ lab05_field_manager }}"
+    definition:
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      metadata:
+        name: "api-route-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+        labels: "{{ lab05_etiquetas_ruta }}"
+
+- name: Validar el Lab 5
+  ansible.builtin.import_tasks: validar.yml
+  when: lab05_validar | bool
+  tags: [validar]

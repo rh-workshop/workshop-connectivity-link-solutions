@@ -1,0 +1,23 @@
+# Camino sin balanceador (https://rh-workshop.github.io/workshop-connectivity-link/lab3.html):
+# Route passthrough que expone el Service del Gateway por el wildcard *.apps.
+# El router solo hace SNI passthrough; Envoy termina TLS con el cert de la TLSPolicy.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ wk_gateway }}
+  namespace: {{ wk_ns_gateway }}
+  labels:
+    workshop.module: connectivity-link
+    workshop.user: {{ lab_id }}
+spec:
+  host: {{ wk_lab_host }}
+  to:
+    kind: Service
+    # <gateway>-<gatewayClassName>: ...-istio (OSSM) o ...-openshift-default (nativo)
+    name: {{ wk_gateway }}-{{ gateway_class }}
+    weight: 100
+  port:
+    targetPort: 443
+  tls:
+    termination: passthrough
+    insecureEdgeTerminationPolicy: Redirect

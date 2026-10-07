@@ -1,0 +1,66 @@
+---
+# Espera a que Argo CD sincronice y a que la RateLimitPolicy tenga el límite
+# esperado. Pide antes un refresh (lo que hace el instructor en el lab) para no
+# esperar al sondeo de tres minutos.
+#   vars: lab06_limite_esperado, lab06_commit_esperado (opcional)
+- name: Pedir a Argo CD que relea el repo (refresh)
+  kubernetes.core.k8s:
+    state: patched
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ lab06_application }}"
+    namespace: "{{ lab06_argocd_namespace }}"
+    definition:
+      metadata:
+        annotations:
+          argocd.argoproj.io/refresh: normal
+  changed_when: false
+
+- name: "Esperar al Application Synced/Healthy{{ (' en ' ~ lab06_commit_esperado[:8]) if lab06_commit_esperado is defined else '' }}"
+  block:
+    - name: Consultar el estado del Application
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: "{{ lab06_application }}"
+        namespace: "{{ lab06_argocd_namespace }}"
+      register: lab06_app
+      vars:
+        lab06_app_estado: "{{ (lab06_app.resources | first | default({})).status | default({}) }}"
+      until:
+        - lab06_app_estado.sync.status | default('') == 'Synced'
+        - lab06_app_estado.health.status | default('') == 'Healthy'
+        - lab06_commit_esperado is not defined or lab06_app_estado.sync.revision | default('') == lab06_commit_esperado
+      retries: "{{ lab06_sync_reintentos }}"
+      delay: 5
+  rescue:
+    - name: Fallar con el estado del Application
+      ansible.builtin.fail:
+        msg: >-
+          {{ lab06_application }} no quedó Synced/Healthy{{ (' en ' ~ lab06_commit_esperado) if lab06_commit_esperado is defined else '' }}:
+          sync={{ (lab06_app.resources | first | default({})).status.sync | default({}) | to_json }}
+          health={{ (lab06_app.resources | first | default({})).status.health | default({}) | to_json }}
+          conditions={{ (lab06_app.resources | first | default({})).status.conditions | default([]) | to_json }}
+
+- name: "Esperar a que la RateLimitPolicy tenga límite {{ lab06_limite_esperado }}"
+  block:
+    - name: Consultar el límite aplicado a la ruta
+      kubernetes.core.k8s_info:
+        api_version: kuadrant.io/v1
+        kind: RateLimitPolicy
+        name: "api-route-rl-{{ lab_id }}"
+        namespace: "{{ wk_ns_app }}"
+      register: lab06_rlp
+      vars:
+        lab06_rlp_limite: >-
+          {{ ((lab06_rlp.resources | first | default({})).spec.limits | default({}))['per-user-per-minute'].rates[0].limit
+             | default('?') }}
+      until: lab06_rlp_limite | string == lab06_limite_esperado | string
+      retries: "{{ lab06_sync_reintentos }}"
+      delay: 5
+  rescue:
+    - name: Fallar si el límite no coincide con Git
+      ansible.builtin.fail:
+        msg: >-
+          La RateLimitPolicy api-route-rl-{{ lab_id }} no llegó a limit={{ lab06_limite_esperado }}
+          (spec.limits={{ (lab06_rlp.resources | first | default({})).spec.limits | default('sin RLP') | to_json }}).

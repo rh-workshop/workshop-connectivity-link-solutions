@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ platform_git_repository_namespace }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ platform_git_repository_name }}
+  namespace: {{ platform_git_repository_namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+{% if platform_git_repository_storage_class %}
+  storageClassName: {{ platform_git_repository_storage_class | to_json }}
+{% endif %}
+  resources:
+    requests:
+      storage: {{ platform_git_repository_storage }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ platform_git_repository_name }}
+  namespace: {{ platform_git_repository_namespace }}
+data:
+  git-server.py: |
+    {{ lookup('ansible.builtin.file', 'git-server.py') | indent(4) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ platform_git_repository_name }}
+  namespace: {{ platform_git_repository_namespace }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: {{ platform_git_repository_name }}}
+  template:
+    metadata:
+      labels: {app: {{ platform_git_repository_name }}}
+      annotations:
+        workshop/scripts-sha256: {{ lookup('ansible.builtin.file', 'git-server.py') | hash('sha256') | to_json }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: git
+          image: {{ platform_git_repository_image }}
+          command: [bash, -ceu]
+          args:
+            - |
+              mkdir -p /srv/git
+              test -d /srv/git/platform.git || git init -q --bare -b main /srv/git/platform.git
+              git -C /srv/git/platform.git config http.receivepack false
+              exec python3 /opt/git/git-server.py
+          env:
+            - {name: HOME, value: /tmp}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {tcpSocket: {port: http}}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 256Mi}
+          volumeMounts:
+            - {name: scripts, mountPath: /opt/git, readOnly: true}
+            - {name: repo, mountPath: /srv}
+      volumes:
+        - name: scripts
+          configMap: {name: {{ platform_git_repository_name }}}
+        - name: repo
+          persistentVolumeClaim: {claimName: {{ platform_git_repository_name }}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ platform_git_repository_name }}
+  namespace: {{ platform_git_repository_namespace }}
+spec:
+  selector: {app: {{ platform_git_repository_name }}}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+# Se exige la conjunción de namespace y selector; nunca acceso de todo el clúster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ platform_git_repository_name }}
+  namespace: {{ platform_git_repository_namespace }}
+spec:
+  podSelector:
+    matchLabels: {app: {{ platform_git_repository_name }}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ platform_git_repository_argocd_namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ platform_git_repository_repo_server_label }}
+      ports: [{protocol: TCP, port: 8080}]

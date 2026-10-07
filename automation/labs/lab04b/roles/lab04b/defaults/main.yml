@@ -1,0 +1,9 @@
+---
+lab04b_validar: true
+# Al terminar, revocar la clave y restaurar el JWT (último paso del Lab 4B):
+# deja el Gateway como lo esperan los Labs 5 y siguientes. Con false, la ruta
+# queda protegida por API key (estado intermedio del lab).
+lab04b_restaurar_jwt: true
+# Clave del consumidor. Si no se define, se genera una aleatoria de 64
+# hexadecimales en cada ejecución (openssl rand -hex 32 del lab).
+# lab04b_api_key: "<desde ansible-vault>"

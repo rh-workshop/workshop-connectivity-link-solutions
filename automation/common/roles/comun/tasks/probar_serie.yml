@@ -1,0 +1,27 @@
+---
+# Envía N peticiones seguidas y guarda sus códigos (y, si se pide, cuerpo y
+# cabeceras) para comprobar cuotas por plan, techos y repartos por pesos.
+# No reintenta: cada petición cuenta, que es lo que se quiere medir.
+#   vars: serie_url, serie_n, serie_cabeceras (opcional), serie_metodo (opcional),
+#         serie_contenido (bool, opcional), serie_prueba (texto, opcional)
+#   deja: wk_serie_codigos (lista de int) y comun_serie (resultados completos)
+- name: "Enviar {{ serie_n }} peticiones · {{ serie_prueba | default(serie_url) }}"
+  ansible.builtin.uri:
+    url: "{{ serie_url }}"
+    method: "{{ serie_metodo | default('GET') }}"
+    headers: "{{ serie_cabeceras | default({}) }}"
+    validate_certs: false
+    status_code: [-1, 200, 401, 403, 404, 429, 500, 502, 503]
+    timeout: 15
+    return_content: "{{ serie_contenido | default(false) }}"
+  loop: "{{ range(serie_n | int) | list }}"
+  register: comun_serie
+  no_log: true
+
+- name: Guardar los códigos de la serie
+  ansible.builtin.set_fact:
+    wk_serie_codigos: "{{ comun_serie.results | map(attribute='status') | list }}"
+
+- name: "Mostrar los códigos · {{ serie_prueba | default(serie_url) }}"
+  ansible.builtin.debug:
+    msg: "{{ serie_n }} peticiones → {{ wk_serie_codigos | join(' ') }}"

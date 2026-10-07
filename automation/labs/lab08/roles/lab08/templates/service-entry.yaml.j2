@@ -1,0 +1,21 @@
+# Lab 8 · paso 4: da de alta el host externo en el proxy (sin esto, HTTP 500).
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: inventario-externo
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  # Visible para la app y su Gateway, no para Gateways de otros participantes.
+  exportTo:
+    - .
+    - {{ wk_ns_gateway }}
+  hosts:
+    - {{ lab08_ext_host }}
+  location: MESH_EXTERNAL
+  resolution: DNS
+  ports:
+    - name: http
+      number: {{ lab08_ext_port }}
+      protocol: HTTP

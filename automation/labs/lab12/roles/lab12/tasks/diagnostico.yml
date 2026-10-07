@@ -1,0 +1,159 @@
+---
+# Paso 10 del lab: provocar los cuatro fallos y leerlos en status. Todo lo
+# diag-* se borra al final, falle o no la comprobación.
+- name: Diagnóstico diag-* (se borra siempre al terminar)
+  block:
+    - name: Crear el Gateway ClusterIP y las políticas rotas (emisor inexistente)
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        server_side_apply:
+          field_manager: "{{ k8s_field_manager }}"
+        template: diag.yaml.j2
+      vars:
+        lab12_diag_fase: base
+
+    - name: El Gateway de pruebas queda Programmed sin balanceador
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: gateway.networking.k8s.io/v1
+        espera_kind: Gateway
+        espera_nombre: "diag-gw-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Programmed
+
+    - name: Leer el Service del Gateway de pruebas
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        namespace: "{{ wk_ns_gateway }}"
+        label_selectors:
+          - "gateway.networking.k8s.io/gateway-name=diag-gw-{{ lab_id }}"
+      register: lab12_diag_svc
+
+    - name: Comprobar que no se creó ningún balanceador
+      ansible.builtin.assert:
+        that: lab12_diag_svc.resources | map(attribute='spec.type') | list == ['ClusterIP']
+        fail_msg: "El Gateway diag- tiene Service {{ lab12_diag_svc.resources | map(attribute='spec.type') | list }}"
+        quiet: true
+
+    - name: "Caso A · el DNSRecord no se publica (DNSProviderError)"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1alpha1
+        espera_kind: DNSRecord
+        espera_nombre: "diag-gw-{{ lab_id }}-https"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Ready
+        espera_estado: "False"
+        espera_razon: DNSProviderError
+
+    - name: "Caso A · la DNSPolicy está aceptada pero no aplicada"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: DNSPolicy
+        espera_nombre: "diag-dns-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Enforced
+        espera_estado: "False"
+
+    - name: "Caso B · emisor inexistente: TLSPolicy Accepted=False (Invalid)"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: TLSPolicy
+        espera_nombre: "diag-tls-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Accepted
+        espera_estado: "False"
+        espera_razon: Invalid
+
+    - name: "Caso C · targetRef inexistente (TargetNotFound)"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: AuthPolicy
+        espera_nombre: "diag-auth-huerfana-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_app }}"
+        espera_condicion: Accepted
+        espera_estado: "False"
+        espera_razon: TargetNotFound
+
+    - name: "Caso D · la política de la ruta queda Overridden"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: AuthPolicy
+        espera_nombre: "diag-auth-ruta-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_app }}"
+        espera_condicion: Enforced
+        espera_estado: "False"
+        espera_razon: Overridden
+
+    - name: "Caso D · la del Gateway (overrides) sí está Enforced"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: AuthPolicy
+        espera_nombre: "diag-auth-gw-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Enforced
+
+    - name: "Caso B · cambiar a un Issuer que existe pero no está listo"
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        server_side_apply:
+          field_manager: "{{ k8s_field_manager }}"
+        template: diag.yaml.j2
+      vars:
+        lab12_diag_fase: emisor_no_listo
+
+    - name: "Caso B · TLSPolicy Accepted=True pero Enforced=False"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: kuadrant.io/v1
+        espera_kind: TLSPolicy
+        espera_nombre: "diag-tls-{{ lab_id }}"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Enforced
+        espera_estado: "False"
+
+    - name: "Caso B · el Certificate queda Ready=False"
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: cert-manager.io/v1
+        espera_kind: Certificate
+        espera_nombre: "diag-gw-{{ lab_id }}-https"
+        espera_namespace: "{{ wk_ns_gateway }}"
+        espera_condicion: Ready
+        espera_estado: "False"
+
+    - name: Resumen del diagnóstico
+      ansible.builtin.debug:
+        msg: >-
+          Diagnóstico OK · A: DNSRecord DNSProviderError, DNSPolicy Enforced=False · B: emisor inexistente
+          Accepted=False/Invalid; emisor no listo Enforced=False y Certificate Ready=False · C: TargetNotFound ·
+          D: ruta Overridden, Gateway Enforced
+  always:
+    - name: Borrar todo lo diag-*
+      ansible.builtin.include_tasks: diagnostico_limpiar.yml

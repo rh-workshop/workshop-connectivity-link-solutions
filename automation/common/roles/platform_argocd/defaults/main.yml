@@ -1,0 +1,11 @@
+---
+# Instalar y configurar son explícitos; la identidad procede de comun.
+platform_argocd_operation: verificar
+platform_argocd_render_dir: ''
+platform_argocd_target_namespaces: []
+platform_argocd_cluster_secret_uid_esperado: ''
+platform_argocd_scope_backup_path: ''
+platform_argocd_controller_backup_path: ''
+platform_argocd_labels:
+  workshop.module: connectivity-link
+  workshop.component: platform-argocd

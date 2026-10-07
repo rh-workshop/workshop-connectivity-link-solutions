@@ -1,0 +1,25 @@
+# Ruta de la API de IA (ia-practica.adoc, paso 2): mismo hostname y listener del
+# Gateway del Lab 3, separada por el path /v1. Hereda el JWT del Gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm-route-{{ lab_id }}
+  namespace: {{ wk_ns_app }}
+  labels:
+    workshop.user: {{ lab_id }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ wk_gateway }}
+      namespace: {{ wk_ns_gateway }}
+  hostnames:
+    - {{ wk_lab_host }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1
+      backendRefs:
+        - name: mock-llm
+          port: 8080

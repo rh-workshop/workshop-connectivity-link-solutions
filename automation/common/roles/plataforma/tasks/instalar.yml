@@ -1,0 +1,178 @@
+---
+- name: Comprobar la propiedad de la plataforma antes de cualquier escritura
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: validar_gestor
+  vars:
+    plataforma_escritura_solicitada: true
+
+- name: Instalar cada operador que no tenga Subscription
+  ansible.builtin.include_tasks: operador.yml
+  loop: "{{ plataforma_operadores_activos }}"
+  loop_control:
+    loop_var: operador
+    label: "{{ operador.nombre }}"
+
+# Los CSV y las APIs deben existir antes de consultar o crear sus CRs.
+- name: Esperar las APIs de los operadores antes de crear instancias
+  ansible.builtin.include_tasks: esperar_apis.yml
+
+- name: Consultar la configuración del operador cert-manager
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1alpha1
+    kind: CertManager
+    name: cluster
+  register: plataforma_certmanager
+  when: plataforma_certmanager_dns01_publico | bool
+
+- name: Añadir resolvers públicos DNS-01 a cert-manager solo si no hay overrideArgs
+  kubernetes.core.k8s:
+    state: patched
+    api_version: operator.openshift.io/v1alpha1
+    kind: CertManager
+    name: cluster
+    merge_type: merge
+    definition:
+      spec:
+        controllerConfig:
+          overrideArgs:
+            - --dns01-recursive-nameservers-only
+            - "--dns01-recursive-nameservers={{ plataforma_certmanager_resolvers }}"
+  when:
+    - plataforma_certmanager_dns01_publico | bool
+    - plataforma_certmanager.resources | length > 0
+    - plataforma_certmanager.resources[0].spec.controllerConfig.overrideArgs | default([]) | length == 0
+
+- name: Avisar si cert-manager ya tiene overrideArgs distintos (no se tocan)
+  ansible.builtin.debug:
+    msg: "cert-manager ya tiene overrideArgs: {{ plataforma_certmanager.resources[0].spec.controllerConfig.overrideArgs }}. Se respetan."
+  when:
+    - plataforma_certmanager_dns01_publico | bool
+    - plataforma_certmanager.resources | length > 0
+    - plataforma_certmanager.resources[0].spec.controllerConfig.overrideArgs | default([]) | length > 0
+
+- name: Crear IstioCNI e Istio solo si no existen
+  when: gateway_class == 'istio'
+  block:
+    - name: Comprobar si existe el CR Istio default
+      kubernetes.core.k8s_info:
+        api_version: sailoperator.io/v1
+        kind: Istio
+        name: default
+      register: plataforma_istio
+
+    - name: Comprobar si existe el CR IstioCNI default
+      kubernetes.core.k8s_info:
+        api_version: sailoperator.io/v1
+        kind: IstioCNI
+        name: default
+      register: plataforma_istiocni
+
+    - name: Crear el namespace istio-cni y el CR IstioCNI
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: asegurar_recurso
+      vars:
+        recurso_definicion: "{{ recurso_istio }}"
+      loop:
+        - {apiVersion: v1, kind: Namespace, metadata: {name: istio-cni}}
+        - "{{ (lookup('ansible.builtin.template', 'istio.yaml.j2') | from_yaml_all | list)[0] }}"
+      loop_control:
+        loop_var: recurso_istio
+        label: "{{ recurso_istio.kind }}/{{ recurso_istio.metadata.name }}"
+      when: plataforma_istiocni.resources | length == 0
+
+    - name: Esperar IstioCNI Ready antes de desplegar el plano de control
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: sailoperator.io/v1
+        espera_kind: IstioCNI
+        espera_nombre: default
+        espera_condicion: Ready
+
+    - name: Crear el namespace istio-system y el CR Istio
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: asegurar_recurso
+      vars:
+        recurso_definicion: "{{ recurso_istio }}"
+      loop:
+        - {apiVersion: v1, kind: Namespace, metadata: {name: istio-system}}
+        - "{{ (lookup('ansible.builtin.template', 'istio.yaml.j2') | from_yaml_all | list)[1] }}"
+      loop_control:
+        loop_var: recurso_istio
+        label: "{{ recurso_istio.kind }}/{{ recurso_istio.metadata.name }}"
+      when: plataforma_istio.resources | length == 0
+
+    - name: Esperar Istio Ready antes de crear Kuadrant
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: sailoperator.io/v1
+        espera_kind: Istio
+        espera_nombre: default
+        espera_condicion: Ready
+
+    - name: Esperar GatewayClass Accepted antes de crear Kuadrant
+      ansible.builtin.include_role:
+        name: comun
+        tasks_from: esperar_condicion
+      vars:
+        espera_api_version: gateway.networking.k8s.io/v1
+        espera_kind: GatewayClass
+        espera_nombre: "{{ gateway_class }}"
+        espera_condicion: Accepted
+
+- name: Comprobar si existe el CR Kuadrant
+  kubernetes.core.k8s_info:
+    api_version: kuadrant.io/v1beta1
+    kind: Kuadrant
+    namespace: kuadrant-system
+  register: plataforma_kuadrant
+
+- name: Crear el CR Kuadrant solo si no existe
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: asegurar_recurso
+  vars:
+    recurso_definicion: "{{ lookup('ansible.builtin.template', 'kuadrant.yaml.j2') | from_yaml }}"
+  when: plataforma_kuadrant.resources | length == 0
+
+- name: Esperar el webhook de cert-manager antes de crear emisores
+  ansible.builtin.include_tasks: esperar_webhook_cm.yml
+
+- name: Comprobar si existe el ClusterIssuer del taller
+  kubernetes.core.k8s_info:
+    api_version: cert-manager.io/v1
+    kind: ClusterIssuer
+    name: "{{ tls_issuer_name }}"
+  register: plataforma_issuer
+
+- name: Crear el ClusterIssuer self-signed solo si no existe
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: asegurar_recurso
+  vars:
+    recurso_definicion: "{{ lookup('ansible.builtin.template', 'cluster-issuer.yaml.j2') | from_yaml }}"
+  when:
+    - plataforma_issuer.resources | length == 0
+    - tls_issuer_name == 'workshop-selfsigned'
+
+- name: Reconciliar únicamente los ClusterRoles gestionados por este taller
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: asegurar_recurso
+  vars:
+    recurso_definicion: "{{ recurso_rbac }}"
+    recurso_actualizar_gestionado: true
+  loop: "{{ lookup('ansible.builtin.template', 'workshop-rbac.yaml.j2') | from_yaml_all | list }}"
+  loop_control:
+    loop_var: recurso_rbac
+    label: "{{ recurso_rbac.metadata.name }}"
+
+- name: Crear la instancia de Keycloak si no existe
+  ansible.builtin.include_tasks: keycloak_instancia.yml
+  when: plataforma_keycloak_instancia | bool

@@ -1,0 +1,73 @@
+---
+# Lab 4B · Autenticar una integración con API key (lab4-api-key.adoc).
+
+- name: Fijar la API key del consumidor para esta ejecución
+  ansible.builtin.set_fact:
+    wk_lab04b_api_key: "{{ lab04b_api_key | default(lookup('ansible.builtin.password', '/dev/null', chars=['hexdigits'], length=64) | lower) }}"
+  no_log: true
+
+- name: Registrar la API key en un Secret con rol customer
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: api-key-secret.yaml.j2
+  vars:
+    lab04b_rol: customer
+  no_log: true
+
+- name: Configurar la AuthPolicy de la ruta (sustituye al JWT en esta HTTPRoute)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: auth-policy-route.yaml.j2
+
+- name: Esperar a la AuthPolicy de ruta Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: AuthPolicy
+    espera_nombre: "api-route-auth-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Enforced
+
+- name: Leer cantidad de rutas adjuntas para interpretar el estado agregado del Gateway
+  kubernetes.core.k8s_info:
+    api_version: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: "{{ wk_gateway }}"
+    namespace: "{{ wk_ns_gateway }}"
+  register: lab04b_gateway_state
+
+- name: Esperar Overridden agregado únicamente en la etapa de una sola ruta adjunta
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: AuthPolicy
+    espera_nombre: "gw-default-auth-{{ lab_id }}"
+    espera_namespace: "{{ wk_ns_gateway }}"
+    espera_condicion: Enforced
+    espera_estado: "False"
+    espera_razon: Overridden
+  when: >-
+    lab04b_gateway_state.resources | length == 1 and
+    (lab04b_gateway_state.resources[0].status.listeners | default([])
+     | selectattr('attachedRoutes', 'defined') | map(attribute='attachedRoutes') | sum) == 1
+
+- name: Validar el Lab 4B y restaurar JWT aunque falle una comprobación
+  tags: [validar]
+  block:
+    - name: Validar el Lab 4B
+      ansible.builtin.import_tasks: validar.yml
+      when: lab04b_validar | bool
+  always:
+    - name: Revocar la clave y restaurar el JWT
+      ansible.builtin.import_tasks: restaurar.yml
+      when: lab04b_restaurar_jwt | bool

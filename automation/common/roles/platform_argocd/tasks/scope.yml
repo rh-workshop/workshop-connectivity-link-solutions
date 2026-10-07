@@ -1,0 +1,70 @@
+---
+- name: Consultar operaciones Application antes de configurar el cache
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+  register: platform_argocd_scope_apps
+  no_log: true
+
+- name: Leer las conexiones cluster de la instancia sin registrar credenciales
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    namespace: "{{ wk_platform_argocd.namespace }}"
+    label_selectors: [argocd.argoproj.io/secret-type=cluster]
+  register: platform_argocd_scope_secrets
+  no_log: true
+
+- name: Preparar el cambio CAS y su respaldo de campos de scope solamente
+  platform_argocd_scope:
+    operation: "{{ 'plan' if platform_argocd_operation == 'configurar' else 'verificar' }}"
+    identity: "{{ wk_platform_argocd }}"
+    instance_uid: "{{ gitops_bootstrap_argocd.resources[0].metadata.uid }}"
+    expected_secret_uid: "{{ platform_argocd_cluster_secret_uid_esperado }}"
+    secrets: "{{ platform_argocd_scope_secrets.resources }}"
+    applications: "{{ platform_argocd_scope_apps.resources }}"
+    render_dir: "{{ platform_argocd_render_dir }}"
+    namespaces: "{{ platform_argocd_target_namespaces }}"
+    backup_path: "{{ platform_argocd_scope_backup_path }}"
+  register: platform_argocd_scope_plan
+  no_log: true
+
+- name: Ajustar únicamente namespaces y clusterResources de la conexión existente
+  kubernetes.core.k8s_json_patch:
+    api_version: v1
+    kind: Secret
+    name: "{{ wk_platform_argocd.name }}-default-cluster-config"
+    namespace: "{{ wk_platform_argocd.namespace }}"
+    patch: "{{ platform_argocd_scope_plan.patch }}"
+  when:
+    - platform_argocd_operation == 'configurar'
+    - platform_argocd_scope_plan.patch | length > 0
+  no_log: true
+
+- name: Esperar una ventana de reconciliación del operador sin ejecutar sync
+  ansible.builtin.pause:
+    seconds: 60
+  when: platform_argocd_operation == 'configurar'
+
+- name: Releer las conexiones después de la reconciliación
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    namespace: "{{ wk_platform_argocd.namespace }}"
+    label_selectors: [argocd.argoproj.io/secret-type=cluster]
+  register: platform_argocd_scope_after
+  when: platform_argocd_operation == 'configurar'
+  no_log: true
+
+- name: Exigir scope estable y hash idéntico de los demás campos de datos
+  platform_argocd_scope:
+    operation: verificar
+    identity: "{{ wk_platform_argocd }}"
+    instance_uid: "{{ gitops_bootstrap_argocd.resources[0].metadata.uid }}"
+    expected_secret_uid: "{{ platform_argocd_cluster_secret_uid_esperado }}"
+    secrets: "{{ platform_argocd_scope_after.resources }}"
+    render_dir: "{{ platform_argocd_render_dir }}"
+    namespaces: "{{ platform_argocd_target_namespaces }}"
+    expected_other_data_hash: "{{ platform_argocd_scope_plan.other_data_hash }}"
+  when: platform_argocd_operation == 'configurar'
+  no_log: true

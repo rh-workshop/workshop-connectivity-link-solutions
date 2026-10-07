@@ -1,0 +1,76 @@
+---
+# Lab 8 · Servicios externos y un solo token (lab8-servicios-externos.adoc).
+
+- name: Exigir el servicio externo y el issuer de Keycloak
+  ansible.builtin.assert:
+    that:
+      - lab08_ext_host | length > 0
+      - wk_keycloak_issuer | length > 0
+    fail_msg: >-
+      Falta lab08_ext_host (hostname del servicio externo; salida
+      «tofu output -raw api_public_dns» de automation/labs/lab08/opentofu) o no hay Keycloak.
+    quiet: true
+
+- name: Fijar la URL del inventario
+  ansible.builtin.set_fact:
+    wk_inv_url: "https://{{ wk_lab_host }}/inventario/items"
+
+- name: Publicar el Service ExternalName y la ruta /inventario
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: inventario-route.yaml.j2
+
+- name: Dar de alta el host externo en el proxy (ServiceEntry)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: service-entry.yaml.j2
+
+- name: Esperar a que el Gateway acepte la ruta del inventario
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_ruta
+  vars:
+    ruta_nombre: "inventario-route-{{ lab_id }}"
+
+- name: Crear la cuota propia del inventario
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: rate-limit.yaml.j2
+
+- name: Reservar el inventario al rol inventario (AuthPolicy de ruta)
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: "{{ k8s_field_manager }}"
+    template: auth-policy.yaml.j2
+
+- name: Esperar a las políticas del inventario Enforced
+  ansible.builtin.include_role:
+    name: comun
+    tasks_from: esperar_condicion
+  vars:
+    espera_api_version: kuadrant.io/v1
+    espera_kind: "{{ item.k }}"
+    espera_nombre: "{{ item.n }}"
+    espera_namespace: "{{ wk_ns_app }}"
+    espera_condicion: Enforced
+  loop:
+    - {k: RateLimitPolicy, n: "inventario-rl-{{ lab_id }}"}
+    - {k: AuthPolicy, n: "inventario-auth-{{ lab_id }}"}
+  loop_control:
+    label: "{{ item.k }}/{{ item.n }}"
+
+- name: Validar el Lab 8
+  ansible.builtin.import_tasks: validar.yml
+  when: lab08_validar | bool
+  tags: [validar]

@@ -1,0 +1,26 @@
+# Solo datos sintéticos. Nunca cargar inventarios reales en esta fixture.
+source_page: modules/ROOT/pages/lab3.adoc
+shell:
+  LAB_ID: demo
+  NS_GATEWAY: gateway-demo
+  GATEWAY_CLASS: istio
+  LAB_HOST: api-demo.workshop.example.test
+  TLS_ISSUER_NAME: workshop-selfsigned
+  DNS_PROVIDER_SECRET: dns-provider-demo
+  KEYCLOAK_ISSUER: https://identity.example.test/realms/realm-demo
+  KEYCLOAK_REALM: realm-demo
+jinja:
+  lab_id: demo
+  wk_ns_gateway: gateway-demo
+  wk_gateway: connectivity-link-gw-demo
+  gateway_class: istio
+  wk_lab_host: api-demo.workshop.example.test
+  tls_issuer_name: workshop-selfsigned
+  dns_provider_secret: dns-provider-demo
+  wk_keycloak_issuer: https://identity.example.test/realms/realm-demo
+  wk_realm: realm-demo
+templates:
+  - labs/lab03/roles/lab03/templates/gateway.yaml.j2
+  - labs/lab03/roles/lab03/templates/tls-policy.yaml.j2
+  - labs/lab03/roles/lab03/templates/dns-policy.yaml.j2
+  - labs/lab03/roles/lab03/templates/auth-policy-jwt.yaml.j2
