@@ -59,6 +59,23 @@ def environment(role):
     return env
 
 
+def resolve(variables, env, passes=5):
+    """Resuelve variables que contienen Jinja (p. ej. "x-{{ lab_id }}"), como hace Ansible al usarlas."""
+    for _ in range(passes):
+        changed = False
+        for key, value in list(variables.items()):
+            if isinstance(value, str) and '{{' in value:
+                try:
+                    rendered = env.from_string(value).render(**variables)
+                except Exception:
+                    continue
+                if rendered != value:
+                    variables[key], changed = rendered, True
+        if not changed:
+            break
+    return variables
+
+
 def check(fixture_path, render_dir=None):
     fixture = yaml.safe_load(fixture_path.read_text())
     templates = sorted((AUTOMATION / 'labs').glob('*/roles/*/templates/*.j2'))
@@ -76,7 +93,8 @@ def check(fixture_path, render_dir=None):
         for number, scenario in enumerate(scenarios):
             label = f'{relative} [{number}]'
             try:
-                rendered = environment(role).from_string(template.read_text()).render(**(variables | scenario))
+                env = environment(role)
+                rendered = env.from_string(template.read_text()).render(**resolve(variables | scenario, env))
                 documents = [r for r in yaml.safe_load_all(rendered) if r is not None]
                 if not documents:
                     raise ValueError('Plantilla sin recursos')

@@ -29,3 +29,11 @@ templates:
 - path: labs/lab12/roles/lab12/templates/rolebinding.yaml.j2
   status: not_compared
   reason: Lab12 usa oc create rolebinding; no manifiesto YAML publicado equivalente.
+- path: labs/lab06/roles/lab06/templates/application-view.yaml.j2
+  status: not_compared
+  reason: Permiso de solo lectura del participante sobre su Application; lo prepara
+    el instructor y la página no publica el Role ni el RoleBinding.
+- path: labs/lab06/roles/lab06/templates/repository-secret.yaml.j2
+  status: not_compared
+  reason: Credencial SSH del repositorio externo de Argo CD; procedimiento privado del
+    instructor, la clave nunca se publica en la página.

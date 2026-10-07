@@ -5,7 +5,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_render import environment
+from check_render import environment, resolve
 from workshop_pages import SKIP, workshop_root
 import yaml
 
@@ -101,7 +101,8 @@ def check(fixture_path, render_dir=None):
         variables.update(fixture.get('jinja', {}))
         if isinstance(entry, dict):
             variables.update(entry.get('jinja', {}))
-        rendered = environment(role).from_string(template.read_text()).render(**variables)
+        env = environment(role)
+        rendered = env.from_string(template.read_text()).render(**resolve(variables, env))
         resources = list(yaml.safe_load_all(rendered))
         if render_dir:
             render_dir.mkdir(parents=True, exist_ok=True)
