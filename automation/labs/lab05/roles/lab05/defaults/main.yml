@@ -51,7 +51,8 @@ lab05_ksm_namespace: rhcl-observability
 # Sufijo del workload del Gateway que usa el plugin de consola (solo OSSM).
 lab05_plugin_sufijo: "-istio"
 # Instalar Grafana comunitario (sin soporte de Red Hat) en modo instalación.
-lab05_grafana_instalar: true
+# Grafana es opcional en la guía (operador comunitario sin soporte de Red Hat): actívalo con true.
+lab05_grafana_instalar: false
 
 lab05_operadores:
   - nombre: tempo-product

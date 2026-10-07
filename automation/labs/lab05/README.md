@@ -34,7 +34,7 @@ repetir el recorrido según la página. La inspección de Limitador en peticione
 con cuota y la correlación con logs de componentes siguen siendo manuales.
 
 Fixtures offline: `python3 automation/tests/contracts/lab05_signals.py` desde la raíz.
-Grafana opcional: la verificación de plataforma comprueba los IDs publicados,
+Grafana opcional (desactivado por defecto; actívalo con `lab05_grafana_instalar=true`): la verificación de plataforma comprueba los IDs publicados,
 sincronización de la generación actual y contrato del datasource Thanos. Eso no
 certifica datos en todos los paneles: las consultas upstream conservan las
 limitaciones de etiquetas descritas en la página (App Developer, namespace y
