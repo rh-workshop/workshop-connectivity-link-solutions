@@ -43,6 +43,10 @@
       El OperatorGroup existente en {{ operador.namespace }} no coincide con el alcance solicitado.
       No se cambia automáticamente: revisa su propiedad y el modo admitido por el CSV.
     quiet: true
+  # Solo al instalar: una Subscription existente al paquete se respeta con su alcance
+  # (p. ej. cert-manager en OwnNamespace, como lo crea la guía del sitio).
+  when: >-
+    plataforma_subs.resources | selectattr('spec.name', 'equalto', operador.nombre) | list | length == 0
 
 - name: "Crear Namespace, OperatorGroup y Subscription de {{ operador.nombre }}"
   ansible.builtin.include_role:
