@@ -115,8 +115,15 @@ class CommonRoles(unittest.TestCase):
                 (False, [{'spec': {'targetNamespaces': ['other']}}], False)]:
             with self.subTest(scope=scope, groups=groups):
                 result = run_tasks([assertion], dict(plataforma_operador_all_namespaces=scope,
-                                    plataforma_ogs={'resources': groups}, operador={'namespace': 'operator-ns'}))
+                                    plataforma_ogs={'resources': groups}, plataforma_subs={'resources': []},
+                                    operador={'namespace': 'operator-ns', 'nombre': 'paquete'}))
                 self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
+        # Una Subscription existente al paquete se respeta aunque su OperatorGroup tenga otro alcance.
+        result = run_tasks([assertion], dict(plataforma_operador_all_namespaces=True,
+                            plataforma_ogs={'resources': [{'spec': {'targetNamespaces': ['operator-ns']}}]},
+                            plataforma_subs={'resources': [{'spec': {'name': 'paquete'}}]},
+                            operador={'namespace': 'operator-ns', 'nombre': 'paquete'}))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_operand_barriers_and_cold_absence(self):
         install = yaml.safe_load((ROLES / 'plataforma/tasks/instalar.yml').read_text())
