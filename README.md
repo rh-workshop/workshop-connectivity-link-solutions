@@ -27,4 +27,4 @@ python3 automation/tests/contracts/render_contract.py
 node postman/validate.cjs
 ```
 
-Los chequeos que comparan las plantillas con las páginas del taller (`check_parity.py`, `catalog_parity.py`) necesitan el repositorio del workshop: se ejecutan cuando este repositorio está montado como submódulo del workshop o con `WORKSHOP_ROOT` apuntando a él; si no, se saltan con un aviso.
+Los chequeos que comparan las plantillas y la colección con las páginas del taller (`check_parity.py`, `catalog_parity.py`, `postman/validate.cjs`) necesitan el repositorio del workshop. Lo encuentran solo si está clonado junto a este (`../workshop-connectivity-link`) o con `WORKSHOP_ROOT` apuntando a él; si no, se saltan con un aviso.

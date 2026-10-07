@@ -5,9 +5,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const directory = __dirname;
-// Las páginas viven en el workshop: WORKSHOP_ROOT o la carpeta superior con antora.yml (submódulo).
+// Las páginas viven en el workshop: WORKSHOP_ROOT, el clon hermano o una carpeta superior con antora.yml.
 const workshopRoot = (() => {
-  const candidates = process.env.WORKSHOP_ROOT ? [path.resolve(process.env.WORKSHOP_ROOT)] : [];
+  const candidates = process.env.WORKSHOP_ROOT ? [path.resolve(process.env.WORKSHOP_ROOT)] : [path.resolve(directory, '..', '..', 'workshop-connectivity-link')];
   for (let dir = path.resolve(directory, '..', '..'); !process.env.WORKSHOP_ROOT; dir = path.dirname(dir)) { candidates.push(dir); if (dir === path.dirname(dir)) break; }
   return candidates.find(dir => fs.existsSync(path.join(dir, 'antora.yml')) && fs.existsSync(path.join(dir, 'modules/ROOT/pages')));
 })();
@@ -88,4 +88,4 @@ const lab8 = collection.item.find(item => item.name.startsWith('Lab 8'));
 const inventarioReq = lab8.item[0].item[1];
 assert.equal(inventarioReq.request.url, '{{apiBaseUrl}}/inventario/items', 'Servicio externo pasa por Gateway');
 console.log(`PASS: ${collection.item.length} carpetas, ${count} peticiones, ${variables.size} variables; rutas, cuotas y captura de tokens comprobadas sin tráfico.`);
-if (!workshopRoot) console.log('SKIP: endpoints sin contrastar con las páginas (monta el repo como submódulo del workshop o define WORKSHOP_ROOT).');
+if (!workshopRoot) console.log('SKIP: endpoints sin contrastar con las páginas (clona workshop-connectivity-link junto a este repositorio o define WORKSHOP_ROOT).');
